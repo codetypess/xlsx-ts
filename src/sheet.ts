@@ -26,11 +26,9 @@ import { XlsxError } from "./errors.js";
 import {
   buildSheetIndex,
   parseCellSnapshot,
-  type LocatedCell,
   type SheetIndex,
 } from "./sheet/sheet-index.js";
 import {
-  formatRangeRef,
   makeCellAddress,
   normalizeCellAddress,
   normalizeColumnNumber,
@@ -39,6 +37,13 @@ import {
   parseRangeRef,
   splitCellAddress,
 } from "./sheet/sheet-address.js";
+import {
+  createCellEntry,
+  normalizeEmptyRowXml,
+  resolveCellAddress,
+  resolveCopyStyleArguments,
+} from "./sheet/sheet-common.js";
+import { formatUsedRangeBounds, updateDimensionRef } from "./sheet/sheet-dimension.js";
 import { parseMergedRanges, updateMergedRanges } from "./sheet/sheet-merge.js";
 import {
   assertStyleId,
@@ -58,11 +63,18 @@ import {
   updateColumnStyleIdInSheetXml,
 } from "./sheet/sheet-style-xml.js";
 import {
+  EMPTY_RELATIONSHIPS_XML,
   getSheetRelationshipsPath,
   listTableReferences,
   rewriteTableReferenceXml,
   type TableReference,
 } from "./sheet/sheet-table-xml.js";
+import {
+  assertColumnNumber,
+  assertFreezeSplit,
+  assertInsertCount,
+  assertRowNumber,
+} from "./sheet/sheet-validation.js";
 import {
   buildDataValidationXml,
   buildExternalHyperlinkXml,
@@ -127,7 +139,6 @@ import {
 } from "./sheet/sheet-write.js";
 import {
   buildXmlElement,
-  getXmlTagInnerStart,
   replaceXmlTagSource,
   rewriteXmlTagsByName,
 } from "./sheet/sheet-xml.js";
@@ -147,13 +158,6 @@ import {
   escapeXmlText,
   parseAttributes,
 } from "./utils/xml.js";
-
-interface UsedRangeBounds {
-  minRow: number;
-  maxRow: number;
-  minColumn: number;
-  maxColumn: number;
-}
 
 export class Sheet {
   name: string;
@@ -1612,126 +1616,3 @@ export class Sheet {
     this.revision += 1;
   }
 }
-
-function resolveCellAddress(addressOrRowNumber: string | number, column?: number | string): string {
-  if (typeof addressOrRowNumber === "string") {
-    if (column !== undefined) {
-      throw new XlsxError("Column argument is not allowed when address is a string");
-    }
-
-    return normalizeCellAddress(addressOrRowNumber);
-  }
-
-  assertRowNumber(addressOrRowNumber);
-  if (column === undefined) {
-    throw new XlsxError(`Missing column index for row: ${addressOrRowNumber}`);
-  }
-
-  return makeCellAddress(addressOrRowNumber, normalizeColumnNumber(column));
-}
-
-function createCellEntry(cell: LocatedCell): CellEntry {
-  return {
-    address: cell.address,
-    rowNumber: cell.rowNumber,
-    columnNumber: cell.columnNumber,
-    ...cell.snapshot,
-  };
-}
-
-function normalizeEmptyRowXml(rowXml: string): string {
-  return rowXml.replace(/>\s*<\/row>$/, "></row>");
-}
-
-function assertFreezeSplit(columnCount: number, rowCount: number): void {
-  if (!Number.isInteger(columnCount) || columnCount < 0) {
-    throw new XlsxError(`Invalid freeze column count: ${columnCount}`);
-  }
-
-  if (!Number.isInteger(rowCount) || rowCount < 0) {
-    throw new XlsxError(`Invalid freeze row count: ${rowCount}`);
-  }
-
-  if (columnCount === 0 && rowCount === 0) {
-    throw new XlsxError("Freeze pane requires at least one frozen row or column");
-  }
-}
-
-function resolveCopyStyleArguments(
-  sourceAddressOrRowNumber: string | number,
-  sourceColumnOrTargetAddress: number | string,
-  targetRowNumber?: number,
-  targetColumn?: number | string,
-): { sourceAddress: string; targetAddress: string } {
-  if (typeof sourceAddressOrRowNumber === "string") {
-    if (typeof sourceColumnOrTargetAddress !== "string") {
-      throw new XlsxError("Missing target address for copyStyle");
-    }
-
-    return {
-      sourceAddress: resolveCellAddress(sourceAddressOrRowNumber),
-      targetAddress: resolveCellAddress(sourceColumnOrTargetAddress),
-    };
-  }
-
-  if (targetRowNumber === undefined || targetColumn === undefined) {
-    throw new XlsxError("Missing target row or column for copyStyle");
-  }
-
-  return {
-    sourceAddress: resolveCellAddress(sourceAddressOrRowNumber, sourceColumnOrTargetAddress),
-    targetAddress: resolveCellAddress(targetRowNumber, targetColumn),
-  };
-}
-
-function updateDimensionRef(sheetIndex: SheetIndex): string {
-  const usedRange = formatUsedRangeBounds(sheetIndex.usedBounds);
-  const dimensionTag = findFirstXmlTag(sheetIndex.xml, "dimension");
-
-  if (!usedRange) {
-    if (!dimensionTag) {
-      return sheetIndex.xml;
-    }
-
-    return replaceXmlTagSource(sheetIndex.xml, dimensionTag, "");
-  }
-
-  const dimensionXml = `<dimension ref="${usedRange}"/>`;
-
-  if (dimensionTag) {
-    return replaceXmlTagSource(sheetIndex.xml, dimensionTag, dimensionXml);
-  }
-
-  const worksheetTag = findFirstXmlTag(sheetIndex.xml, "worksheet");
-  if (!worksheetTag) {
-    throw new XlsxError("Worksheet is missing opening tag");
-  }
-
-  const worksheetInnerStart = getXmlTagInnerStart(worksheetTag);
-  return sheetIndex.xml.slice(0, worksheetInnerStart) + dimensionXml + sheetIndex.xml.slice(worksheetInnerStart);
-}
-
-function formatUsedRangeBounds(bounds: UsedRangeBounds | null): string | null {
-  return bounds ? formatRangeRef(bounds.minRow, bounds.minColumn, bounds.maxRow, bounds.maxColumn) : null;
-}
-
-function assertRowNumber(rowNumber: number): void {
-  if (!Number.isInteger(rowNumber) || rowNumber < 1) {
-    throw new XlsxError(`Invalid row number: ${rowNumber}`);
-  }
-}
-
-function assertColumnNumber(columnNumber: number): void {
-  if (!Number.isInteger(columnNumber) || columnNumber < 1) {
-    throw new XlsxError(`Invalid column number: ${columnNumber}`);
-  }
-}
-
-function assertInsertCount(count: number): void {
-  if (!Number.isInteger(count) || count < 1) {
-    throw new XlsxError(`Invalid insert count: ${count}`);
-  }
-}
-const EMPTY_RELATIONSHIPS_XML =
-  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-  `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
