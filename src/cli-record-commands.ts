@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-
 import { Command } from "commander";
 
 import {
@@ -8,32 +6,15 @@ import {
   parseJsonStringArray,
   writeJson,
 } from "./cli-json.js";
-import type { CellRecord, Writer } from "./cli-json.js";
+import type { CellRecord } from "./cli-json.js";
+import { parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
+import type { CliCommandIo } from "./cli-shared.js";
 import { Workbook } from "./workbook.js";
-
-export interface RecordCommandIo {
-  cwd: string;
-  stdout: Writer;
-}
-
-export interface RecordCommandHelpers {
-  parsePositiveInteger: (value: string) => number;
-  resolveOutputPath: (
-    inputPath: string,
-    options: {
-      inPlace: boolean;
-      output?: string;
-    },
-  ) => string;
-}
 
 export function registerRecordCommands(
   program: Command,
-  io: RecordCommandIo,
-  helpers: RecordCommandHelpers,
+  io: CliCommandIo,
 ): void {
-  const { parsePositiveInteger, resolveOutputPath } = helpers;
-
   program
     .command("records")
     .argument("<file>", "input xlsx file")
@@ -275,8 +256,4 @@ async function getRecord(
 ): Promise<CellRecord | null> {
   const workbook = await Workbook.open(filePath);
   return workbook.getSheet(sheetName).getRecord(row, headerRow);
-}
-
-function resolveFrom(cwd: string, targetPath: string): string {
-  return resolve(cwd, targetPath);
 }

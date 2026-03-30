@@ -1,10 +1,9 @@
-import { resolve } from "node:path";
-
 import { Command } from "commander";
 
 import { parseJsonCellValue, writeJson } from "./cli-json.js";
-import type { Writer } from "./cli-json.js";
 import type { CellValue, DefinedName, SheetVisibility } from "./types.js";
+import { parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
+import type { CliCommandIo } from "./cli-shared.js";
 import { Workbook } from "./workbook.js";
 
 interface InspectResult {
@@ -35,29 +34,10 @@ interface GetCellResult {
   value: CellValue;
 }
 
-export interface WorkbookCommandIo {
-  cwd: string;
-  stdout: Writer;
-}
-
-export interface WorkbookCommandHelpers {
-  parsePositiveInteger: (value: string) => number;
-  resolveOutputPath: (
-    inputPath: string,
-    options: {
-      inPlace: boolean;
-      output?: string;
-    },
-  ) => string;
-}
-
 export function registerWorkbookCommands(
   program: Command,
-  io: WorkbookCommandIo,
-  helpers: WorkbookCommandHelpers,
+  io: CliCommandIo,
 ): void {
-  const { parsePositiveInteger, resolveOutputPath } = helpers;
-
   program
     .command("inspect")
     .argument("<file>", "input xlsx file")
@@ -413,8 +393,4 @@ function trimTrailingEmptyStrings(values: string[]): string[] {
   }
 
   return values.slice(0, end);
-}
-
-function resolveFrom(cwd: string, targetPath: string): string {
-  return resolve(cwd, targetPath);
 }

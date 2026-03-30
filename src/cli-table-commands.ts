@@ -1,5 +1,4 @@
 import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import { Command, InvalidArgumentError } from "commander";
 
@@ -12,7 +11,8 @@ import {
   resolveUpsertMatchValue,
   writeJson,
 } from "./cli-json.js";
-import type { Writer } from "./cli-json.js";
+import { parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
+import type { CliCommandIo } from "./cli-shared.js";
 import {
   findConfigTableRow,
   findStructuredTableRow,
@@ -36,29 +36,10 @@ import { Workbook } from "./workbook.js";
 
 type ConfigTableSyncMode = "replace" | "upsert";
 
-export interface TableCommandIo {
-  cwd: string;
-  stdout: Writer;
-}
-
-export interface TableCommandHelpers {
-  parsePositiveInteger: (value: string) => number;
-  resolveOutputPath: (
-    inputPath: string,
-    options: {
-      inPlace: boolean;
-      output?: string;
-    },
-  ) => string;
-}
-
 export function registerTableCommands(
   program: Command,
-  io: TableCommandIo,
-  helpers: TableCommandHelpers,
+  io: CliCommandIo,
 ): void {
-  const { parsePositiveInteger, resolveOutputPath } = helpers;
-
   const configTable = program
     .command("config-table")
     .description("High-level workflow for header-based config sheets");
@@ -742,10 +723,6 @@ function getOrCreateSheet(workbook: Workbook, sheetName: string) {
 
 function collectRepeatedStrings(value: string, previous: string[] = []): string[] {
   return [...previous, value];
-}
-
-function resolveFrom(cwd: string, targetPath: string): string {
-  return resolve(cwd, targetPath);
 }
 
 async function resolveCliTableCommandContext(

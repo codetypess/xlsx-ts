@@ -4,29 +4,21 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Command, CommanderError, InvalidArgumentError } from "commander";
+import { Command, CommanderError } from "commander";
 
-import { formatError, writeJson } from "./cli-json.js";
+import { formatError } from "./cli-json.js";
 import type { Writer } from "./cli-json.js";
 import { registerApplyCommands } from "./cli-apply-commands.js";
 import { registerRecordCommands } from "./cli-record-commands.js";
+import { CliExitError } from "./cli-shared.js";
 import { registerTableCommands } from "./cli-table-commands.js";
+import { registerValidateCommands } from "./cli-validate-commands.js";
 import { registerWorkbookCommands } from "./cli-workbook-commands.js";
-import { validateRoundtripFile } from "./roundtrip.js";
 
 interface CliIo {
   cwd?: string;
   stderr?: Writer;
   stdout?: Writer;
-}
-
-class CliExitError extends Error {
-  readonly exitCode: number;
-
-  constructor(exitCode: number) {
-    super(`CLI exited with code ${exitCode}`);
-    this.exitCode = exitCode;
-  }
 }
 
 export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
@@ -69,10 +61,6 @@ function createProgram(io: Required<CliIo>): Command {
       cwd: io.cwd,
       stdout: io.stdout,
     },
-    {
-      parsePositiveInteger,
-      resolveOutputPath,
-    },
   );
 
   registerRecordCommands(
@@ -80,10 +68,6 @@ function createProgram(io: Required<CliIo>): Command {
     {
       cwd: io.cwd,
       stdout: io.stdout,
-    },
-    {
-      parsePositiveInteger,
-      resolveOutputPath,
     },
   );
 
@@ -93,10 +77,6 @@ function createProgram(io: Required<CliIo>): Command {
       cwd: io.cwd,
       stdout: io.stdout,
     },
-    {
-      parsePositiveInteger,
-      resolveOutputPath,
-    },
   );
 
   registerApplyCommands(
@@ -105,63 +85,14 @@ function createProgram(io: Required<CliIo>): Command {
       cwd: io.cwd,
       stdout: io.stdout,
     },
-    {
-      resolveOutputPath,
-    },
   );
 
-  program
-    .command("validate")
-    .argument("<file>", "input xlsx file")
-    .option("--output <file>", "persist the roundtrip workbook to the given path")
-    .action(async (file: string, options: { output?: string }) => {
-      const result = await validateRoundtripFile(
-        resolveFrom(io.cwd, file),
-        options.output ? resolveFrom(io.cwd, options.output) : undefined,
-      );
-      writeJson(io.stdout, result);
-
-      if (!result.ok) {
-        throw new CliExitError(1);
-      }
-    });
+  registerValidateCommands(program, {
+    cwd: io.cwd,
+    stdout: io.stdout,
+  });
 
   return program;
-}
-
-function resolveOutputPath(
-  inputPath: string,
-  options: {
-    inPlace: boolean;
-    output?: string;
-  },
-): string {
-  if (options.inPlace && options.output) {
-    throw new Error("Use either --output or --in-place, not both");
-  }
-
-  if (options.inPlace) {
-    return inputPath;
-  }
-
-  if (options.output) {
-    return options.output;
-  }
-
-  throw new Error("An output path is required; pass --output or use --in-place");
-}
-
-function parsePositiveInteger(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new InvalidArgumentError(`Expected a positive integer, got: ${value}`);
-  }
-
-  return parsed;
-}
-
-function resolveFrom(cwd: string, targetPath: string): string {
-  return resolve(cwd, targetPath);
 }
 
 async function main(): Promise<void> {

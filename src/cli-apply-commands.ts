@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import { Command } from "commander";
 
@@ -20,7 +19,9 @@ import {
   parseJsonDocument,
   writeJson,
 } from "./cli-json.js";
-import type { CellRecord, Writer } from "./cli-json.js";
+import type { CellRecord } from "./cli-json.js";
+import { resolveFrom, resolveOutputPath } from "./cli-shared.js";
+import type { CliCommandIo } from "./cli-shared.js";
 import type { CellValue, SheetVisibility } from "./types.js";
 import { Workbook } from "./workbook.js";
 
@@ -144,25 +145,9 @@ interface OpsDocument {
   output?: string;
 }
 
-export interface ApplyCommandIo {
-  cwd: string;
-  stdout: Writer;
-}
-
-export interface ApplyCommandHelpers {
-  resolveOutputPath: (
-    inputPath: string,
-    options: {
-      inPlace: boolean;
-      output?: string;
-    },
-  ) => string;
-}
-
 export function registerApplyCommands(
   program: Command,
-  io: ApplyCommandIo,
-  helpers: ApplyCommandHelpers,
+  io: CliCommandIo,
 ): void {
   program
     .command("apply")
@@ -183,7 +168,7 @@ export function registerApplyCommands(
         const opsPath = resolveFrom(io.cwd, options.ops);
         const document = await readOpsDocument(opsPath);
         const configuredOutput = document.output ? resolveFrom(io.cwd, document.output) : undefined;
-        const outputPath = helpers.resolveOutputPath(inputPath, {
+        const outputPath = resolveOutputPath(inputPath, {
           inPlace: options.inPlace === true,
           output: options.output ? resolveFrom(io.cwd, options.output) : configuredOutput,
         });
@@ -441,8 +426,4 @@ function applyWorkbookOperation(workbook: Workbook, action: WorkbookOperation): 
       workbook.setSheetVisibility(action.sheet, action.visibility);
       return;
   }
-}
-
-function resolveFrom(cwd: string, targetPath: string): string {
-  return resolve(cwd, targetPath);
 }
