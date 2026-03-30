@@ -49,6 +49,27 @@ import {
   upsertHyperlinkInSheetXml,
 } from "./sheet-metadata.js";
 import {
+  addContentTypeOverride,
+  appendRelationship,
+  appendTablePart,
+  assertTableName,
+  buildTableXml,
+  findSheetTableReferenceByName,
+  findWorksheetChildInsertionIndex,
+  getNextRelationshipIdFromXml,
+  getNextTableId,
+  getNextTableName,
+  getNextTablePath,
+  makeRelativeSheetRelationshipTarget,
+  parseSheetTables,
+  removeContentTypeOverride,
+  removeRelationshipById,
+  removeTablePartsFromSheetXml,
+  TABLE_CONTENT_TYPE,
+  TABLE_RELATIONSHIP_TYPE,
+  upsertRelationship,
+} from "./sheet-package.js";
+import {
   parseSheetFreezePane,
   parseSheetSelection,
   removeFreezePaneFromSheetXml,
@@ -659,27 +680,7 @@ export class Sheet {
   }
 
   getTables(): Array<{ name: string; displayName: string; range: string; path: string }> {
-    const tables: Array<{ name: string; displayName: string; range: string; path: string }> = [];
-
-    for (const table of this.getTableReferences()) {
-      const tableXml = this.workbook.readEntryText(table.path);
-      const tableTag = findFirstXmlTag(tableXml, "table");
-      if (!tableTag) {
-        continue;
-      }
-
-      const name = getTagAttr(tableTag, "name");
-      const displayName = getTagAttr(tableTag, "displayName");
-      const range = getTagAttr(tableTag, "ref");
-
-      if (!name || !displayName || !range) {
-        continue;
-      }
-
-      tables.push({ name, displayName, range: normalizeRangeRef(range), path: table.path });
-    }
-
-    return tables;
+    return parseSheetTables(this.getTableReferences(), (path) => this.workbook.readEntryText(path));
   }
 
   getHyperlinks(): Hyperlink[] {
@@ -816,7 +817,7 @@ export class Sheet {
 
   addTable(
     range: string,
-    options: { name?: string } = {},
+  options: { name?: string } = {},
   ): { name: string; displayName: string; range: string; path: string } {
     const normalizedRange = normalizeRangeRef(range);
     const existingTables = this.getTables();
@@ -828,7 +829,7 @@ export class Sheet {
     }
 
     const tablePath = getNextTablePath(this.workbook.listEntries());
-    const tableId = getNextTableId(this.workbook.listEntries(), this.workbook);
+    const tableId = getNextTableId(this.workbook.listEntries(), (path) => this.workbook.readEntryText(path));
     const relationshipId = getNextRelationshipIdFromXml(this.readSheetRelationshipsXml());
     const tableXml = buildTableXml(normalizedRange, tableId, name, this.getRange(normalizedRange)[0] ?? []);
 
@@ -837,7 +838,7 @@ export class Sheet {
       appendRelationship(
         this.readSheetRelationshipsXml(),
         relationshipId,
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table",
+        TABLE_RELATIONSHIP_TYPE,
         makeRelativeSheetRelationshipTarget(this.path, tablePath),
       ),
     );
@@ -853,15 +854,11 @@ export class Sheet {
   }
 
   removeTable(name: string): void {
-    const tableReference = this.getTableReferences().find((table) => {
-      const tableXml = this.workbook.readEntryText(table.path);
-      const tableTag = findFirstXmlTag(tableXml, "table");
-      if (!tableTag) {
-        return false;
-      }
-
-      return getTagAttr(tableTag, "name") === name || getTagAttr(tableTag, "displayName") === name;
-    });
+    const tableReference = findSheetTableReferenceByName(
+      this.getTableReferences(),
+      (path) => this.workbook.readEntryText(path),
+      name,
+    );
 
     if (!tableReference) {
       throw new XlsxError(`Table not found: ${name}`);
@@ -3435,32 +3432,6 @@ function rewriteTableReferenceXml(
   return nextTableXml;
 }
 
-function removeTablePartsFromSheetXml(sheetXml: string, relationshipIds: string[]): string {
-  const tablePartsTag = findFirstXmlTag(sheetXml, "tableParts");
-  if (!tablePartsTag || tablePartsTag.innerXml === null) {
-    return sheetXml;
-  }
-
-  const keptTableParts = findXmlTags(tablePartsTag.innerXml, "tablePart")
-    .map((tablePartTag) => ({
-      relationshipId: getTagAttr(tablePartTag, "r:id"),
-      xml: tablePartTag.source,
-    }))
-    .filter((tablePart) => tablePart.relationshipId && !relationshipIds.includes(tablePart.relationshipId));
-
-  const nextTablePartsXml =
-    keptTableParts.length === 0
-      ? ""
-      : buildCountedXmlContainer(
-          "tableParts",
-          tablePartsTag.attributesSource,
-          "count",
-          keptTableParts.map((tablePart) => tablePart.xml),
-        );
-
-  return replaceXmlTagSource(sheetXml, tablePartsTag, nextTablePartsXml);
-}
-
 function getXmlTagInnerStart(tag: XmlTag): number {
   if (tag.innerXml === null) {
     return tag.end;
@@ -3533,278 +3504,6 @@ function buildSelfClosingXmlElement(tagName: string, attributes: Array<[string, 
 
 function getSheetRelationshipsPath(sheetPath: string): string {
   return `${dirnamePosix(sheetPath)}/_rels/${basenamePosix(sheetPath)}.rels`;
-}
-
-function getNextTablePath(entryPaths: string[]): string {
-  let nextIndex = 1;
-
-  for (const path of entryPaths) {
-    const match = path.match(/^xl\/tables\/table(\d+)\.xml$/);
-    if (match) {
-      nextIndex = Math.max(nextIndex, Number(match[1]) + 1);
-    }
-  }
-
-  return `xl/tables/table${nextIndex}.xml`;
-}
-
-function getNextTableId(entryPaths: string[], workbook: Workbook): number {
-  let nextId = 1;
-
-  for (const path of entryPaths) {
-    if (!/^xl\/tables\/table\d+\.xml$/.test(path)) {
-      continue;
-    }
-
-    const tableXml = workbook.readEntryText(path);
-    const tableTag = findFirstXmlTag(tableXml, "table");
-    const idText = tableTag ? getTagAttr(tableTag, "id") : undefined;
-    if (idText) {
-      nextId = Math.max(nextId, Number(idText) + 1);
-    }
-  }
-
-  return nextId;
-}
-
-function getNextTableName(entryPaths: string[]): string {
-  let nextIndex = 1;
-
-  for (const path of entryPaths) {
-    const match = path.match(/^xl\/tables\/table(\d+)\.xml$/);
-    if (match) {
-      nextIndex = Math.max(nextIndex, Number(match[1]) + 1);
-    }
-  }
-
-  return `Table${nextIndex}`;
-}
-
-function assertTableName(name: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-    throw new XlsxError(`Invalid table name: ${name}`);
-  }
-}
-
-function buildTableXml(
-  range: string,
-  id: number,
-  name: string,
-  headerValues: CellValue[],
-): string {
-  const columnNames = buildTableColumnNames(headerValues, parseRangeRef(range).endColumn - parseRangeRef(range).startColumn + 1);
-
-  return (
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-    `<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${escapeXmlText(name)}" displayName="${escapeXmlText(name)}" ref="${range}" totalsRowShown="0">` +
-    `<autoFilter ref="${range}"/>` +
-    `<tableColumns count="${columnNames.length}">` +
-    columnNames
-      .map((columnName, index) => `<tableColumn id="${index + 1}" name="${escapeXmlText(columnName)}"/>`)
-      .join("") +
-    `</tableColumns>` +
-    `<tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>` +
-    `</table>`
-  );
-}
-
-function buildTableColumnNames(headerValues: CellValue[], width: number): string[] {
-  const names: string[] = [];
-  const seen = new Map<string, number>();
-
-  for (let index = 0; index < width; index += 1) {
-    const rawValue = headerValues[index];
-    const baseName =
-      typeof rawValue === "string" && rawValue.trim().length > 0 ? rawValue.trim() : `Column${index + 1}`;
-    const nextCount = (seen.get(baseName) ?? 0) + 1;
-    seen.set(baseName, nextCount);
-    names.push(nextCount === 1 ? baseName : `${baseName}_${nextCount}`);
-  }
-
-  return names;
-}
-
-function getNextRelationshipIdFromXml(relationshipsXml: string): string {
-  let nextId = 1;
-
-  for (const relationshipTag of findXmlTags(relationshipsXml, "Relationship")) {
-    const relationshipId = getTagAttr(relationshipTag, "Id");
-    if (!relationshipId?.startsWith("rId")) {
-      continue;
-    }
-
-    nextId = Math.max(nextId, Number(relationshipId.slice(3)) + 1);
-  }
-
-  return `rId${nextId}`;
-}
-
-function appendRelationship(
-  relationshipsXml: string,
-  relationshipId: string,
-  type: string,
-  target: string,
-  targetMode?: string,
-): string {
-  const closingTag = "</Relationships>";
-  const insertionIndex = relationshipsXml.indexOf(closingTag);
-  if (insertionIndex === -1) {
-    throw new XlsxError("Worksheet relationships file is missing </Relationships>");
-  }
-
-  const attributes: Array<[string, string]> = [
-    ["Id", relationshipId],
-    ["Type", type],
-    ["Target", target],
-  ];
-  if (targetMode) {
-    attributes.push(["TargetMode", targetMode]);
-  }
-
-  const relationshipXml = `<Relationship ${serializeAttributes(attributes)}/>`;
-  return relationshipsXml.slice(0, insertionIndex) + relationshipXml + relationshipsXml.slice(insertionIndex);
-}
-
-function upsertRelationship(
-  relationshipsXml: string,
-  relationshipId: string,
-  type: string,
-  target: string,
-  targetMode?: string,
-): string {
-  const nextRelationshipXml = buildRelationshipXml(relationshipId, type, target, targetMode);
-  for (const relationshipTag of findXmlTags(relationshipsXml, "Relationship")) {
-    if (getTagAttr(relationshipTag, "Id") === relationshipId) {
-      return replaceXmlTagSource(relationshipsXml, relationshipTag, nextRelationshipXml);
-    }
-  }
-
-  return appendRelationship(relationshipsXml, relationshipId, type, target, targetMode);
-}
-
-function removeRelationshipById(relationshipsXml: string, relationshipId: string): string {
-  for (const relationshipTag of findXmlTags(relationshipsXml, "Relationship")) {
-    if (getTagAttr(relationshipTag, "Id") === relationshipId) {
-      return replaceXmlTagSource(relationshipsXml, relationshipTag, "");
-    }
-  }
-
-  return relationshipsXml;
-}
-
-function buildRelationshipXml(
-  relationshipId: string,
-  type: string,
-  target: string,
-  targetMode?: string,
-): string {
-  const attributes: Array<[string, string]> = [
-    ["Id", relationshipId],
-    ["Type", type],
-    ["Target", target],
-  ];
-  if (targetMode) {
-    attributes.push(["TargetMode", targetMode]);
-  }
-
-  return `<Relationship ${serializeAttributes(attributes)}/>`;
-}
-
-function makeRelativeSheetRelationshipTarget(sheetPath: string, targetPath: string): string {
-  const fromParts = dirnamePosix(sheetPath).split("/").filter((part) => part.length > 0);
-  const toParts = targetPath.split("/").filter((part) => part.length > 0);
-  let commonLength = 0;
-
-  while (
-    commonLength < fromParts.length &&
-    commonLength < toParts.length &&
-    fromParts[commonLength] === toParts[commonLength]
-  ) {
-    commonLength += 1;
-  }
-
-  const upward = fromParts.slice(commonLength).map(() => "..");
-  const downward = toParts.slice(commonLength);
-  return [...upward, ...downward].join("/");
-}
-
-function appendTablePart(sheetXml: string, relationshipId: string): string {
-  const tablePartsTag = findFirstXmlTag(sheetXml, "tableParts");
-  if (tablePartsTag && tablePartsTag.innerXml !== null) {
-    const tableParts = findXmlTags(tablePartsTag.innerXml, "tablePart")
-      .filter((tag) => tag.selfClosing)
-      .map((tag) => tag.source);
-    tableParts.push(`<tablePart r:id="${relationshipId}"/>`);
-    const nextTablePartsXml = buildCountedXmlContainer("tableParts", tablePartsTag.attributesSource, "count", tableParts);
-    return replaceXmlTagSource(sheetXml, tablePartsTag, nextTablePartsXml);
-  }
-
-  const closingTag = "</worksheet>";
-  const insertionIndex = sheetXml.indexOf(closingTag);
-  if (insertionIndex === -1) {
-    throw new XlsxError("Worksheet is missing </worksheet>");
-  }
-
-  return (
-    sheetXml.slice(0, insertionIndex) +
-    `<tableParts count="1"><tablePart r:id="${relationshipId}"/></tableParts>` +
-    sheetXml.slice(insertionIndex)
-  );
-}
-
-function findWorksheetChildInsertionIndex(sheetXml: string, followingTagNames: string[]): number {
-  let insertionIndex = -1;
-
-  for (const tagName of followingTagNames) {
-    const match = sheetXml.match(new RegExp(`<${escapeRegex(tagName)}\\b`));
-    if (!match || match.index === undefined) {
-      continue;
-    }
-
-    if (insertionIndex === -1 || match.index < insertionIndex) {
-      insertionIndex = match.index;
-    }
-  }
-
-  if (insertionIndex !== -1) {
-    return insertionIndex;
-  }
-
-  const closingTag = "</worksheet>";
-  const closingTagIndex = sheetXml.indexOf(closingTag);
-  if (closingTagIndex === -1) {
-    throw new XlsxError("Worksheet is missing </worksheet>");
-  }
-
-  return closingTagIndex;
-}
-
-function addContentTypeOverride(contentTypesXml: string, partPath: string, contentType: string): string {
-  if (new RegExp(`PartName\\s*=\\s*["']/${escapeRegex(partPath)}["']`).test(contentTypesXml)) {
-    return contentTypesXml;
-  }
-
-  const closingTag = "</Types>";
-  const insertionIndex = contentTypesXml.indexOf(closingTag);
-  if (insertionIndex === -1) {
-    throw new XlsxError("Content types file is missing </Types>");
-  }
-
-  return (
-    contentTypesXml.slice(0, insertionIndex) +
-    `<Override PartName="/${escapeXmlText(partPath)}" ContentType="${escapeXmlText(contentType)}"/>` +
-    contentTypesXml.slice(insertionIndex)
-  );
-}
-
-function removeContentTypeOverride(contentTypesXml: string, partPath: string): string {
-  for (const overrideTag of findXmlTags(contentTypesXml, "Override")) {
-    if (getTagAttr(overrideTag, "PartName") === `/${partPath}`) {
-      return replaceXmlTagSource(contentTypesXml, overrideTag, "");
-    }
-  }
-
-  return contentTypesXml;
 }
 
 function assertFreezeSplit(columnCount: number, rowCount: number): void {
@@ -3982,8 +3681,6 @@ const WORKSHEET_CELL_REF_ATTRIBUTES: Array<[string, string]> = [
   ["selection", "activeCell"],
   ["pane", "topLeftCell"],
 ];
-const TABLE_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
 const ROW_CLOSE_TAG = "</row>";
 const CELL_CLOSE_TAG = "</c>";
 const SHEET_VIEWS_FOLLOWING_TAGS = [

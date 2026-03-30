@@ -55,6 +55,13 @@ import {
   updateActiveSheetInWorkbookXml,
   updateSheetVisibilityInWorkbookXml,
 } from "./workbook-sheet-metadata.js";
+import {
+  buildEmptyWorksheetXml,
+  removeContentTypeOverride,
+  removeRelationshipById,
+  renameHyperlinkLocation,
+  updateAppSheetNames,
+} from "./workbook-sheet-package.js";
 import { Zip } from "./zip.js";
 import type { WorkbookContext } from "./workbook-context.js";
 import { resolveWorkbookContext } from "./workbook-context.js";
@@ -2292,13 +2299,6 @@ function assertSheetIndex(sheetIndex: number, sheetCount: number): void {
   }
 }
 
-function buildEmptyWorksheetXml(): string {
-  return (
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData></sheetData></worksheet>`
-  );
-}
-
 function replaceXmlTagSource(xml: string, tag: XmlTag, nextSource: string): string {
   return xml.slice(0, tag.start) + nextSource + xml.slice(tag.end);
 }
@@ -2324,94 +2324,4 @@ function rewriteXmlTagsByName(
 
   nextXml += xml.slice(cursor);
   return nextXml;
-}
-
-function renameHyperlinkLocation(
-  location: string,
-  currentSheetName: string,
-  nextSheetName: string,
-): string {
-  const hashPrefix = location.startsWith("#") ? "#" : "";
-  const target = hashPrefix ? location.slice(1) : location;
-  const bangIndex = target.indexOf("!");
-
-  if (bangIndex === -1) {
-    return location;
-  }
-
-  const sheetToken = target.slice(0, bangIndex);
-  const normalizedSheetName =
-    sheetToken.startsWith("'") && sheetToken.endsWith("'")
-      ? sheetToken.slice(1, -1).replaceAll("''", "'")
-      : sheetToken;
-
-  if (normalizedSheetName !== currentSheetName) {
-    return location;
-  }
-
-  return `${hashPrefix}${formatSheetNameForReference(nextSheetName)}${target.slice(bangIndex)}`;
-}
-
-function removeRelationshipById(relationshipsXml: string, relationshipId: string): string {
-  for (const relationshipTag of findXmlTags(relationshipsXml, "Relationship")) {
-    if (getTagAttr(relationshipTag, "Id") === relationshipId) {
-      return replaceXmlTagSource(relationshipsXml, relationshipTag, "");
-    }
-  }
-
-  return relationshipsXml;
-}
-
-function removeContentTypeOverride(contentTypesXml: string, partPath: string): string {
-  for (const overrideTag of findXmlTags(contentTypesXml, "Override")) {
-    if (getTagAttr(overrideTag, "PartName") === `/${partPath}`) {
-      return replaceXmlTagSource(contentTypesXml, overrideTag, "");
-    }
-  }
-
-  return contentTypesXml;
-}
-
-function updateAppSheetNames(appXml: string, sheetNames: string[]): string {
-  const hasHeadingPairs = findFirstXmlTag(appXml, "HeadingPairs") !== null;
-  const hasTitlesOfParts = findFirstXmlTag(appXml, "TitlesOfParts") !== null;
-
-  if (!hasHeadingPairs && !hasTitlesOfParts) {
-    return appXml;
-  }
-
-  let nextAppXml = appXml;
-
-  if (hasHeadingPairs) {
-    const nextHeadingPairs =
-      `<HeadingPairs><vt:vector size="2" baseType="variant">` +
-      `<vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant>` +
-      `<vt:variant><vt:i4>${sheetNames.length}</vt:i4></vt:variant>` +
-      `</vt:vector></HeadingPairs>`;
-    const headingPairsTag = findFirstXmlTag(nextAppXml, "HeadingPairs");
-    if (headingPairsTag) {
-      nextAppXml = replaceXmlTagSource(nextAppXml, headingPairsTag, nextHeadingPairs);
-    }
-  }
-
-  if (hasTitlesOfParts) {
-    const nextTitlesOfParts =
-      `<TitlesOfParts><vt:vector size="${sheetNames.length}" baseType="lpstr">` +
-      sheetNames.map((sheetName) => `<vt:lpstr>${escapeXmlText(sheetName)}</vt:lpstr>`).join("") +
-      `</vt:vector></TitlesOfParts>`;
-    const titlesOfPartsTag = findFirstXmlTag(nextAppXml, "TitlesOfParts");
-    if (titlesOfPartsTag) {
-      nextAppXml = replaceXmlTagSource(nextAppXml, titlesOfPartsTag, nextTitlesOfParts);
-    }
-  }
-
-  return nextAppXml;
-}
-
-function formatSheetNameForReference(sheetName: string): string {
-  if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(sheetName)) {
-    return sheetName;
-  }
-
-  return `'${sheetName.replaceAll("'", "''")}'`;
 }
