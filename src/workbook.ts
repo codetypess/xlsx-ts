@@ -61,9 +61,15 @@ import {
   buildEmptyWorksheetXml,
   removeContentTypeOverride,
   removeRelationshipById,
-  renameHyperlinkLocation,
   updateAppSheetNames,
 } from "./workbook/workbook-sheet-package.js";
+import {
+  countVisibleSheets,
+  requireSheetByName,
+  resolveLocalSheetId,
+  rewriteFormulaXml,
+  rewriteHyperlinkLocationXml,
+} from "./workbook/workbook-sheet-helpers.js";
 import {
   assertCellBorderPatch,
   assertCellFillPatch,
@@ -106,7 +112,7 @@ import {
   type ParsedFont,
   type StylesCache,
 } from "./workbook/workbook-styles-parse.js";
-import { replaceXmlTagSource, rewriteXmlTagsByName } from "./workbook/workbook-xml.js";
+import { replaceXmlTagSource } from "./workbook/workbook-xml.js";
 import { Zip } from "./zip.js";
 import type { WorkbookContext } from "./workbook/workbook-context.js";
 import { resolveWorkbookContext } from "./workbook/workbook-context.js";
@@ -202,13 +208,7 @@ export class Workbook {
   }
 
   getSheet(sheetName: string): Sheet {
-    const sheet = this.getWorkbookContext().sheets.find((candidate) => candidate.name === sheetName);
-
-    if (!sheet) {
-      throw new XlsxError(`Sheet not found: ${sheetName}`);
-    }
-
-    return sheet;
+    return requireSheetByName(this.getWorkbookContext().sheets, sheetName);
   }
 
   getActiveSheet(): Sheet {
@@ -516,10 +516,7 @@ export class Workbook {
 
   getSheetVisibility(sheetName: string): SheetVisibility {
     const context = this.getWorkbookContext();
-    const sheet = context.sheets.find((candidate) => candidate.name === sheetName);
-    if (!sheet) {
-      throw new XlsxError(`Sheet not found: ${sheetName}`);
-    }
+    const sheet = requireSheetByName(context.sheets, sheetName);
 
     return parseSheetVisibility(this.readEntryText(context.workbookPath), sheet.relationshipId);
   }
@@ -528,10 +525,7 @@ export class Workbook {
     assertSheetVisibility(visibility);
 
     const context = this.getWorkbookContext();
-    const sheet = context.sheets.find((candidate) => candidate.name === sheetName);
-    if (!sheet) {
-      throw new XlsxError(`Sheet not found: ${sheetName}`);
-    }
+    const sheet = requireSheetByName(context.sheets, sheetName);
 
     const workbookPath = context.workbookPath;
     const workbookXml = this.readEntryText(workbookPath);
@@ -541,9 +535,7 @@ export class Workbook {
       return;
     }
 
-    const visibleSheetCount = context.sheets.filter(
-      (candidate) => parseSheetVisibility(workbookXml, candidate.relationshipId) === "visible",
-    ).length;
+    const visibleSheetCount = countVisibleSheets(workbookXml, context.sheets, parseSheetVisibility);
     if (currentVisibility === "visible" && visibility !== "visible" && visibleSheetCount === 1) {
       throw new XlsxError("Workbook must contain at least one visible sheet");
     }
@@ -570,12 +562,7 @@ export class Workbook {
     assertDefinedName(name);
 
     const context = this.getWorkbookContext();
-    const scope = options.scope ?? null;
-    const localSheetId = scope === null ? null : context.sheets.findIndex((sheet) => sheet.name === scope);
-
-    if (scope !== null && localSheetId === -1) {
-      throw new XlsxError(`Sheet not found: ${scope}`);
-    }
+    const localSheetId = resolveLocalSheetId(context.sheets, options.scope ?? null);
 
     const workbookPath = context.workbookPath;
     const workbookXml = this.readEntryText(workbookPath);
@@ -598,12 +585,7 @@ export class Workbook {
 
   deleteDefinedName(name: string, scope?: string): void {
     const context = this.getWorkbookContext();
-    const targetScope = scope ?? null;
-    const localSheetId = targetScope === null ? null : context.sheets.findIndex((sheet) => sheet.name === targetScope);
-
-    if (targetScope !== null && localSheetId === -1) {
-      throw new XlsxError(`Sheet not found: ${targetScope}`);
-    }
+    const localSheetId = resolveLocalSheetId(context.sheets, scope ?? null);
 
     const workbookPath = context.workbookPath;
     const workbookXml = this.readEntryText(workbookPath);
@@ -618,10 +600,7 @@ export class Workbook {
     assertSheetName(nextSheetName);
 
     const context = this.getWorkbookContext();
-    const renamedSheet = context.sheets.find((sheet) => sheet.name === currentSheetName);
-    if (!renamedSheet) {
-      throw new XlsxError(`Sheet not found: ${currentSheetName}`);
-    }
+    const renamedSheet = requireSheetByName(context.sheets, currentSheetName);
 
     if (currentSheetName === nextSheetName) {
       return renamedSheet;
@@ -653,9 +632,7 @@ export class Workbook {
   moveSheet(sheetName: string, targetIndex: number): Sheet {
     const context = this.getWorkbookContext();
     const sourceIndex = context.sheets.findIndex((sheet) => sheet.name === sheetName);
-    if (sourceIndex === -1) {
-      throw new XlsxError(`Sheet not found: ${sheetName}`);
-    }
+    requireSheetByName(context.sheets, sheetName);
 
     assertSheetIndex(targetIndex, context.sheets.length);
     if (sourceIndex === targetIndex) {
@@ -729,9 +706,7 @@ export class Workbook {
     }
 
     const deletedSheetIndex = context.sheets.findIndex((sheet) => sheet.name === sheetName);
-    if (deletedSheetIndex === -1) {
-      throw new XlsxError(`Sheet not found: ${sheetName}`);
-    }
+    requireSheetByName(context.sheets, sheetName);
 
     const deletedSheet = context.sheets[deletedSheetIndex];
     if (!deletedSheet) {
@@ -902,23 +877,10 @@ export class Workbook {
     path: string,
     transformFormula: (formula: string) => string,
   ): void {
-    const sheetXml = this.readEntryText(path);
-    let changed = false;
-    const nextSheetXml = rewriteXmlTagsByName(sheetXml, "f", (formulaTag) => {
-      const formula = decodeXmlText(formulaTag.innerXml ?? "");
-      const nextFormula = transformFormula(formula);
+    const result = rewriteFormulaXml(this.readEntryText(path), transformFormula);
 
-      if (nextFormula === formula) {
-        return formulaTag.source;
-      }
-
-      changed = true;
-      const serializedAttributes = serializeAttributes(parseAttributes(formulaTag.attributesSource));
-      return `<f${serializedAttributes ? ` ${serializedAttributes}` : ""}>${escapeXmlText(nextFormula)}</f>`;
-    });
-
-    if (changed) {
-      this.writeEntryText(path, nextSheetXml);
+    if (result.changed) {
+      this.writeEntryText(path, result.sheetXml);
     }
   }
 
@@ -927,31 +889,10 @@ export class Workbook {
     currentSheetName: string,
     nextSheetName: string,
   ): void {
-    const sheetXml = this.readEntryText(path);
-    let changed = false;
-    const nextSheetXml = rewriteXmlTagsByName(sheetXml, "hyperlink", (hyperlinkTag) => {
-      const attributes = parseAttributes(hyperlinkTag.attributesSource);
-      const locationIndex = attributes.findIndex(([name]) => name === "location");
+    const result = rewriteHyperlinkLocationXml(this.readEntryText(path), currentSheetName, nextSheetName);
 
-      if (locationIndex === -1) {
-        return hyperlinkTag.source;
-      }
-
-      const location = attributes[locationIndex]?.[1] ?? "";
-      const nextLocation = renameHyperlinkLocation(location, currentSheetName, nextSheetName);
-      if (nextLocation === location) {
-        return hyperlinkTag.source;
-      }
-
-      changed = true;
-      const nextAttributes = [...attributes];
-      nextAttributes[locationIndex] = ["location", nextLocation];
-      const serializedAttributes = serializeAttributes(nextAttributes);
-      return `<hyperlink${serializedAttributes ? ` ${serializedAttributes}` : ""}/>`;
-    });
-
-    if (changed) {
-      this.writeEntryText(path, nextSheetXml);
+    if (result.changed) {
+      this.writeEntryText(path, result.sheetXml);
     }
   }
 
