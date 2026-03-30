@@ -26,11 +26,13 @@ import type {
 import { XlsxError } from "./errors.js";
 import {
   Sheet,
+} from "./sheet.js";
+import {
   deleteFormulaReferences,
   deleteSheetFormulaReferences,
   renameSheetFormulaReferences,
   shiftFormulaReferences,
-} from "./sheet.js";
+} from "./sheet/sheet-structure.js";
 import { parseSharedStrings } from "./workbook/shared-strings.js";
 import {
   buildDefinedNameTagSource,
@@ -62,6 +64,7 @@ import {
   renameHyperlinkLocation,
   updateAppSheetNames,
 } from "./workbook/workbook-sheet-package.js";
+import { replaceXmlTagSource, rewriteXmlTagsByName } from "./workbook/workbook-xml.js";
 import { Zip } from "./zip.js";
 import type { WorkbookContext } from "./workbook/workbook-context.js";
 import { resolveWorkbookContext } from "./workbook/workbook-context.js";
@@ -2297,31 +2300,4 @@ function assertSheetIndex(sheetIndex: number, sheetCount: number): void {
   if (!Number.isInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= sheetCount) {
     throw new XlsxError(`Invalid sheet index: ${sheetIndex}`);
   }
-}
-
-function replaceXmlTagSource(xml: string, tag: XmlTag, nextSource: string): string {
-  return xml.slice(0, tag.start) + nextSource + xml.slice(tag.end);
-}
-
-function rewriteXmlTagsByName(
-  xml: string,
-  tagName: string,
-  rewriteTag: (tag: XmlTag) => string,
-): string {
-  const tags = findXmlTags(xml, tagName);
-  if (tags.length === 0) {
-    return xml;
-  }
-
-  let nextXml = "";
-  let cursor = 0;
-
-  for (const tag of tags) {
-    nextXml += xml.slice(cursor, tag.start);
-    nextXml += rewriteTag(tag);
-    cursor = tag.end;
-  }
-
-  nextXml += xml.slice(cursor);
-  return nextXml;
 }

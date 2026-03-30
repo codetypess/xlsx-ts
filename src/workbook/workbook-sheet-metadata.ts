@@ -1,5 +1,5 @@
 import type { Sheet } from "../sheet.js";
-import { deleteSheetFormulaReferences, renameSheetFormulaReferences } from "../sheet.js";
+import { deleteSheetFormulaReferences, renameSheetFormulaReferences } from "../sheet/sheet-structure.js";
 import { XlsxError } from "../errors.js";
 import type { SheetVisibility } from "../types.js";
 import {
