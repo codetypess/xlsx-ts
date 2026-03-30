@@ -105,6 +105,14 @@ import {
   getNextCustomNumberFormatId,
 } from "./workbook/workbook-styles-build.js";
 import {
+  removeEntryOrderPath,
+  resolveSharedStringsCache,
+  resolveStylesCache,
+  shouldResetSharedStringsCache,
+  shouldResetStylesCache,
+  shouldResetWorkbookContext,
+} from "./workbook/workbook-cache.js";
+import {
   parseStylesXml,
   type ParsedBorder,
   type ParsedCellStyle,
@@ -795,32 +803,22 @@ export class Workbook {
   }
 
   private getSharedStringsCache(): string[] {
-    if (this.sharedStringsCache) {
-      return this.sharedStringsCache;
-    }
-
-    const sharedStringsPath = this.getWorkbookContext().sharedStringsPath;
-    if (!sharedStringsPath || !this.entries.has(sharedStringsPath)) {
-      this.sharedStringsCache = [];
-      return this.sharedStringsCache;
-    }
-
-    this.sharedStringsCache = parseSharedStrings(this.readEntryText(sharedStringsPath));
+    this.sharedStringsCache = resolveSharedStringsCache(
+      this.sharedStringsCache,
+      this.getWorkbookContext(),
+      (path) => this.entries.has(path),
+      (path) => this.readEntryText(path),
+    );
     return this.sharedStringsCache;
   }
 
   private getStylesCache(): StylesCache | null {
-    if (this.stylesCache !== undefined) {
-      return this.stylesCache;
-    }
-
-    const stylesPath = this.getWorkbookContext().stylesPath;
-    if (!stylesPath || !this.entries.has(stylesPath)) {
-      this.stylesCache = null;
-      return this.stylesCache;
-    }
-
-    this.stylesCache = parseStylesXml(stylesPath, this.readEntryText(stylesPath));
+    this.stylesCache = resolveStylesCache(
+      this.stylesCache,
+      this.getWorkbookContext(),
+      (path) => this.entries.has(path),
+      (path) => this.readEntryText(path),
+    );
     return this.stylesCache;
   }
 
@@ -924,19 +922,15 @@ export class Workbook {
       this.entryOrder.push(path);
     }
 
-    if (this.workbookContext?.sharedStringsPath === path) {
+    if (shouldResetSharedStringsCache(this.workbookContext, path)) {
       this.sharedStringsCache = undefined;
     }
 
-    if (this.workbookContext?.stylesPath === path) {
+    if (shouldResetStylesCache(this.workbookContext, path)) {
       this.stylesCache = undefined;
     }
 
-    if (
-      this.workbookContext &&
-      (this.workbookContext.workbookPath === path || this.workbookContext.workbookRelsPath === path)
-    ) {
-      this.stylesCache = undefined;
+    if (shouldResetWorkbookContext(this.workbookContext, path)) {
       this.workbookContext = undefined;
     }
 
@@ -948,20 +942,15 @@ export class Workbook {
       return;
     }
 
-    const entryIndex = this.entryOrder.indexOf(path);
-    if (entryIndex !== -1) {
-      this.entryOrder.splice(entryIndex, 1);
-    }
+    removeEntryOrderPath(this.entryOrder, path);
 
-    if (
-      this.workbookContext &&
-      (this.workbookContext.sharedStringsPath === path ||
-        this.workbookContext.stylesPath === path ||
-        this.workbookContext.workbookPath === path ||
-        this.workbookContext.workbookRelsPath === path)
-    ) {
+    if (shouldResetSharedStringsCache(this.workbookContext, path)) {
       this.sharedStringsCache = undefined;
+    }
+    if (shouldResetStylesCache(this.workbookContext, path)) {
       this.stylesCache = undefined;
+    }
+    if (shouldResetWorkbookContext(this.workbookContext, path) || this.workbookContext?.sharedStringsPath === path) {
       this.workbookContext = undefined;
     }
   }
