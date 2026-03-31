@@ -1,4 +1,4 @@
 interface:
-  display_name: "XLSX Agent"
-  short_description: "Inspect and edit XLSX via CLI"
-  default_prompt: "Use $xlsx-agent to inspect or edit an XLSX workbook with the local fastxlsx CLI."
+  display_name: "FastXLSX Agent"
+  short_description: "Inspect, sync, and patch XLSX via CLI"
+  default_prompt: "Use $xlsx-agent to inspect, sync, or patch an XLSX workbook with the available fastxlsx CLI entry."

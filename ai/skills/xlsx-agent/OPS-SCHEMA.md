@@ -3,8 +3,14 @@
 Use this file when preparing an `ops.json` document for:
 
 ```bash
-npm run cli -- apply path/to/file.xlsx --ops ops.json --output out.xlsx
+fastxlsx apply path/to/file.xlsx --ops ops.json --output out.xlsx
 ```
+
+## Contents
+
+- File Shape
+- Supported Actions
+- Recommended Pattern
 
 ## File Shape
 
@@ -27,9 +33,15 @@ Use either of these forms:
 
 `output` is optional. A CLI `--output` flag overrides it.
 
+`apply` is the right choice when the edit spans multiple cells, mixes workbook-level and sheet-level changes, or should be expressed as one deterministic batch.
+
+Actions run in array order. Put workbook setup steps first, then cell or record edits that depend on that setup.
+
 ## Supported Actions
 
-### setCell
+### Cell Actions
+
+#### setCell
 
 ```json
 { "type": "setCell", "sheet": "Sheet1", "cell": "B2", "value": 123 }
@@ -37,7 +49,7 @@ Use either of these forms:
 
 `value` must be a JSON scalar: string, number, boolean, or `null`.
 
-### setBackgroundColor
+#### setBackgroundColor
 
 ```json
 { "type": "setBackgroundColor", "sheet": "Config", "cell": "B2", "color": "FFFF0000" }
@@ -49,7 +61,7 @@ Use `null` to clear a solid background fill:
 { "type": "setBackgroundColor", "sheet": "Config", "cell": "B2", "color": null }
 ```
 
-### setFormula
+#### setFormula
 
 ```json
 {
@@ -63,37 +75,41 @@ Use `null` to clear a solid background fill:
 
 `cachedValue` is optional and must be a JSON scalar when present.
 
-### setNumberFormat
+#### setNumberFormat
 
 ```json
 { "type": "setNumberFormat", "sheet": "Config", "cell": "B2", "formatCode": "0.00%" }
 ```
 
-### clearCell
+#### clearCell
 
 ```json
 { "type": "clearCell", "sheet": "Sheet1", "cell": "D2" }
 ```
 
-### renameSheet
+Use this when the cell itself should be removed. If a workflow needs a blank value while preserving a deliberate placeholder write, use `setCell` with `null` instead.
 
-```json
-{ "type": "renameSheet", "from": "Sheet1", "to": "Config" }
-```
-
-### addSheet
-
-```json
-{ "type": "addSheet", "sheet": "Summary" }
-```
-
-### copyStyle
+#### copyStyle
 
 ```json
 { "type": "copyStyle", "sheet": "Config", "from": "B2", "to": "C2" }
 ```
 
-### setHeaders
+### Sheet Actions
+
+#### renameSheet
+
+```json
+{ "type": "renameSheet", "from": "Sheet1", "to": "Config" }
+```
+
+#### addSheet
+
+```json
+{ "type": "addSheet", "sheet": "Summary" }
+```
+
+#### setHeaders
 
 ```json
 { "type": "setHeaders", "sheet": "Config", "headers": ["Key", "Value"] }
@@ -104,13 +120,20 @@ Optional fields:
 - `headerRow`
 - `startColumn`
 
-### deleteSheet
+Defaults:
+
+- `headerRow`: `1`
+- `startColumn`: `1`
+
+#### deleteSheet
 
 ```json
 { "type": "deleteSheet", "sheet": "OldSheet" }
 ```
 
-### addRecord
+### Record Actions
+
+#### addRecord
 
 ```json
 {
@@ -124,7 +147,9 @@ Optional field:
 
 - `headerRow`
 
-### addRecords
+Default `headerRow` is `1`.
+
+#### addRecords
 
 ```json
 {
@@ -141,7 +166,9 @@ Optional field:
 
 - `headerRow`
 
-### setRecord
+Default `headerRow` is `1`.
+
+#### setRecord
 
 ```json
 {
@@ -156,7 +183,9 @@ Optional field:
 
 - `headerRow`
 
-### setRecords
+Default `headerRow` is `1`.
+
+#### setRecords
 
 ```json
 {
@@ -172,7 +201,9 @@ Optional field:
 
 - `headerRow`
 
-### deleteRecord
+Default `headerRow` is `1`.
+
+#### deleteRecord
 
 ```json
 { "type": "deleteRecord", "sheet": "Config", "row": 2 }
@@ -182,7 +213,9 @@ Optional field:
 
 - `headerRow`
 
-### deleteRecords
+Default `headerRow` is `1`.
+
+#### deleteRecords
 
 ```json
 { "type": "deleteRecords", "sheet": "Config", "rows": [2, 4, 7] }
@@ -192,13 +225,17 @@ Optional field:
 
 - `headerRow`
 
-### setActiveSheet
+Default `headerRow` is `1`.
+
+### Workbook Metadata Actions
+
+#### setActiveSheet
 
 ```json
 { "type": "setActiveSheet", "sheet": "Config" }
 ```
 
-### setSheetVisibility
+#### setSheetVisibility
 
 ```json
 { "type": "setSheetVisibility", "sheet": "Config", "visibility": "hidden" }
@@ -210,7 +247,7 @@ Allowed visibility values:
 - `hidden`
 - `veryHidden`
 
-### setDefinedName
+#### setDefinedName
 
 Global:
 
@@ -224,7 +261,7 @@ Sheet-scoped:
 { "type": "setDefinedName", "name": "LocalValue", "scope": "Config", "value": "$B$2" }
 ```
 
-### deleteDefinedName
+#### deleteDefinedName
 
 Global:
 
@@ -242,8 +279,8 @@ Sheet-scoped:
 
 For multi-step workbook edits:
 
-1. Run `inspect`.
-2. Build `ops.json`.
-3. Run `apply`.
-4. Run `validate`.
-5. Re-run `get` on critical cells if the user needs exact confirmation.
+1. Run `inspect` to confirm sheet names and workbook structure before building operations.
+2. Build `ops.json` in execution order so dependent steps happen in a predictable sequence.
+3. Run `apply` once so the workbook is saved from one deterministic action list.
+4. Run `validate` to catch roundtrip or packaging regressions immediately.
+5. Re-run `get` on critical cells if exact confirmation is required.
