@@ -5,14 +5,35 @@ import { fileURLToPath } from "node:url";
 import { Workbook } from "../src/index.js";
 
 export interface BenchmarkResult {
+  mode: "dense" | "sparse";
   runs: number[];
   averageMs: number;
   nonNull: number;
+  visitedCells: number;
+}
+
+export interface SheetBenchmarkSummary {
+  name: string;
+  rowCount: number;
+  columnCount: number;
+  usedRange: string | null;
+  physicalCellCount: number;
+  nonNull: number;
+  maxPhysicalColumn: number;
+  denseReadCount: number;
+  denseAmplification: number;
+}
+
+export interface BenchmarkComparison {
+  denseVisitedCells: number;
+  sparseVisitedCells: number;
+  denseAmplification: number;
 }
 
 export interface BenchmarkBaseline {
   expectedNonNull: number;
   maxAverageMs?: number;
+  maxSparseAverageMs?: number;
 }
 
 export async function runBenchmark(options: {
@@ -22,41 +43,62 @@ export async function runBenchmark(options: {
   file: string;
   iterations: number;
   result: BenchmarkResult;
+  sparseResult: BenchmarkResult;
+  comparison: BenchmarkComparison;
+  sheets: SheetBenchmarkSummary[];
 }> {
   const filePath = options.filePath ?? resolve(process.cwd(), "res/monster.xlsx");
   const iterations = options.iterations ?? 3;
-  const result = await benchmark(iterations, () => benchmarkLocalWorkbook(filePath));
+  const summary = await summarizeWorkbook(filePath);
+  const result = await benchmark(iterations, "dense", () => benchmarkDenseWorkbook(filePath));
+  const sparseResult = await benchmark(iterations, "sparse", () => benchmarkSparseWorkbook(filePath));
+  const comparison = {
+    denseVisitedCells: result.visitedCells,
+    sparseVisitedCells: sparseResult.visitedCells,
+    denseAmplification:
+      sparseResult.nonNull === 0 ? 0 : Number((result.visitedCells / sparseResult.nonNull).toFixed(2)),
+  };
 
   return {
     file: filePath,
     iterations,
     result,
+    sparseResult,
+    comparison,
+    sheets: summary,
   };
 }
 
 async function benchmark(
   iterations: number,
-  runOnce: () => Promise<number> | number,
+  mode: BenchmarkResult["mode"],
+  runOnce: () => Promise<{ nonNull: number; visitedCells: number }> | { nonNull: number; visitedCells: number },
 ): Promise<BenchmarkResult> {
   const runs: number[] = [];
   let nonNull = 0;
+  let visitedCells = 0;
 
   for (let index = 0; index < iterations; index += 1) {
     const startedAt = performance.now();
-    nonNull = await runOnce();
+    const run = await runOnce();
+    nonNull = run.nonNull;
+    visitedCells = run.visitedCells;
     runs.push(Number((performance.now() - startedAt).toFixed(1)));
   }
 
   return {
+    mode,
     runs,
     averageMs: Number((runs.reduce((sum, value) => sum + value, 0) / runs.length).toFixed(1)),
     nonNull,
+    visitedCells,
   };
 }
 
-async function benchmarkLocalWorkbook(filePath: string): Promise<number> {
+async function benchmarkDenseWorkbook(filePath: string): Promise<{ nonNull: number; visitedCells: number }> {
   const workbook = await Workbook.open(filePath);
   let nonNull = 0;
+  let visitedCells = 0;
 
   for (const sheet of workbook.getSheets()) {
     const rowCount = sheet.rowCount;
@@ -64,6 +106,7 @@ async function benchmarkLocalWorkbook(filePath: string): Promise<number> {
 
     for (let rowNumber = 1; rowNumber <= rowCount; rowNumber += 1) {
       for (let columnNumber = 1; columnNumber <= columnCount; columnNumber += 1) {
+        visitedCells += 1;
         const cell = sheet.getCell(rowNumber, columnNumber);
         if (cell !== null) {
           cell.toString();
@@ -73,7 +116,53 @@ async function benchmarkLocalWorkbook(filePath: string): Promise<number> {
     }
   }
 
-  return nonNull;
+  return { nonNull, visitedCells };
+}
+
+async function benchmarkSparseWorkbook(filePath: string): Promise<{ nonNull: number; visitedCells: number }> {
+  const workbook = await Workbook.open(filePath);
+  let nonNull = 0;
+  let visitedCells = 0;
+
+  for (const sheet of workbook.getSheets()) {
+    for (const cell of sheet.iterCellEntries()) {
+      visitedCells += 1;
+      if (cell.value !== null) {
+        cell.value.toString();
+        nonNull += 1;
+      }
+    }
+  }
+
+  return { nonNull, visitedCells };
+}
+
+async function summarizeWorkbook(filePath: string): Promise<SheetBenchmarkSummary[]> {
+  const workbook = await Workbook.open(filePath);
+  const summaries: SheetBenchmarkSummary[] = [];
+
+  for (const sheet of workbook.getSheets()) {
+    const physicalEntries = sheet.getPhysicalCellEntries();
+    const logicalEntries = sheet.getCellEntries();
+    const physicalCellCount = physicalEntries.length;
+    const nonNull = logicalEntries.length;
+    const maxPhysicalColumn = physicalEntries.reduce((currentMax, entry) => Math.max(currentMax, entry.columnNumber), 0);
+    const denseReadCount = sheet.rowCount * sheet.columnCount;
+
+    summaries.push({
+      name: sheet.name,
+      rowCount: sheet.rowCount,
+      columnCount: sheet.columnCount,
+      usedRange: sheet.getRangeRef(),
+      physicalCellCount,
+      nonNull,
+      maxPhysicalColumn,
+      denseReadCount,
+      denseAmplification: nonNull === 0 ? 0 : Number((denseReadCount / nonNull).toFixed(2)),
+    });
+  }
+
+  return summaries;
 }
 
 async function main(): Promise<void> {
@@ -155,6 +244,10 @@ function validateAgainstBaseline(
 
   if (baseline.maxAverageMs !== undefined && local.averageMs > baseline.maxAverageMs) {
     failures.push(`Average ${local.averageMs}ms exceeded ${baseline.maxAverageMs}ms`);
+  }
+
+  if (baseline.maxSparseAverageMs !== undefined && result.sparseResult.averageMs > baseline.maxSparseAverageMs) {
+    failures.push(`Sparse average ${result.sparseResult.averageMs}ms exceeded ${baseline.maxSparseAverageMs}ms`);
   }
 
   return failures;

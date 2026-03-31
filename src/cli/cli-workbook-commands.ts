@@ -14,8 +14,9 @@ interface InspectResult {
     columnCount: number;
     headers: string[];
     name: string;
+    physicalRangeRef: string | null;
+    rangeRef: string | null;
     rowCount: number;
-    usedRange: string | null;
     visibility: SheetVisibility;
   }>;
 }
@@ -352,8 +353,9 @@ async function inspectWorkbook(filePath: string, headerRow: number): Promise<Ins
     columnCount: sheet.columnCount,
     headers: trimTrailingEmptyStrings(sheet.getHeaders(headerRow)),
     name: sheet.name,
+    physicalRangeRef: sheet.getPhysicalRangeRef(),
+    rangeRef: sheet.getRangeRef(),
     rowCount: sheet.rowCount,
-    usedRange: sheet.getUsedRange(),
     visibility: workbook.getSheetVisibility(sheet.name),
   }));
 

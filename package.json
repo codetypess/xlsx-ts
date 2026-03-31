@@ -1,6 +1,6 @@
 {
   "name": "@codetypess/xlsx-ts",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "A lossless-first XLSX reader/writer prototype that preserves styles and untouched package parts.",
   "type": "module",
   "license": "MIT",
@@ -41,6 +41,7 @@
     "prepublishOnly": "npm run build && npm test && npm run pack:check",
     "release": "npm publish --access public",
     "bench:monster": "node --import tsx scripts/benchmark.ts res/monster.xlsx",
+    "bench:profile": "node --import tsx scripts/profile-read.ts",
     "bench:check": "node --import tsx scripts/benchmark.ts res/monster.xlsx 5 --check benchmarks/monster-baseline.json",
     "validate:roundtrip": "node --import tsx scripts/validate-roundtrip.ts",
     "validate:task": "npm run validate:roundtrip -- res/task.xlsx"

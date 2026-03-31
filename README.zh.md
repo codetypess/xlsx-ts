@@ -146,7 +146,9 @@ npm run cli -- inspect path/to/file.xlsx
 - `sheet.cloneRowStyle(rowNumber, patch?)`
 - `sheet.cloneColumnStyle(column, patch?)`
 - `sheet.getCellEntries()`
+- `sheet.getPhysicalCellEntries()`
 - `sheet.iterCellEntries()`
+- `sheet.iterPhysicalCellEntries()`
 - `sheet.rowCount`
 - `sheet.columnCount`
 - `sheet.getHeaders(headerRowNumber?)`
@@ -154,10 +156,13 @@ npm run cli -- inspect path/to/file.xlsx
 - `sheet.getRecords(headerRowNumber?)`
 - `sheet.getColumn(column)`
 - `sheet.getColumnEntries(column)`
+- `sheet.getPhysicalColumnEntries(column)`
 - `sheet.getRow(rowNumber)`
 - `sheet.getRowEntries(rowNumber)`
+- `sheet.getPhysicalRowEntries(rowNumber)`
 - `sheet.getRange(range)`
-- `sheet.getUsedRange()`
+- `sheet.getRangeRef()`
+- `sheet.getPhysicalRangeRef()`
 - `sheet.getMergedRanges()`
 - `sheet.getAutoFilter()`
 - `sheet.getFreezePane()`
@@ -299,8 +304,9 @@ await workbook.save("output.xlsx");
 - `sheet.cell(address)` 返回可复用的 `Cell` 句柄，值/公式/样式索引会按工作表 revision 缓存；现在也可以通过 `cell.style` / `cell.alignment` / `cell.font` / `cell.fill` / `cell.backgroundColor` / `cell.border` / `cell.numberFormat` 读取当前样式、对齐、字体、填充、背景色、边框和数字格式定义，并用 `cell.setStyle(patch)` / `cell.setAlignment(patch)` / `cell.setFont(patch)` / `cell.setFill(patch)` / `cell.setBackgroundColor(color)` / `cell.setBorder(patch)` / `cell.setNumberFormat(formatCode)` / `cell.cloneStyle(patch?)` 直接派生并应用新样式
 - `sheet.cell()` / `getCell()` / `setCell()` / `getFormula()` / `setFormula()` 现在同时支持 `A1` 地址和 `(rowNumber, column)` 两种调用方式；行列索引是从 `1` 开始
 - 后续 `getCell` / `getFormula` 会直接走索引查找，不再每次整张表做字符串匹配
-- `sheet.rowCount` / `sheet.columnCount` 当前表示已用区域的最大行号 / 最大列号；空表返回 `0`
-- `sheet.getCellEntries()` / `iterCellEntries()` / `getRowEntries()` / `getColumnEntries()` 会按 worksheet 中真实存在的 `<c>` 节点返回带地址、行列号、类型、样式索引和值的对象，适合大表和稀疏表遍历
+- `sheet.rowCount` / `sheet.columnCount` 表示逻辑 used range 的最大行号 / 最大列号，只统计当前带值或公式的单元格；纯空白占位的 `<c>` 节点和只包含空白占位单元格的物理行都不会扩展 used range。空表返回 `0`
+- `sheet.getCellEntries()` / `iterCellEntries()` / `getRowEntries()` / `getColumnEntries()` / `getRangeRef()` 是默认的逻辑读取 API，会跳过既没有值也没有公式的空白占位 `<c>` 节点，并按逻辑 used bounds 工作
+- `sheet.getPhysicalCellEntries()` / `iterPhysicalCellEntries()` / `getPhysicalRowEntries()` / `getPhysicalColumnEntries()` / `getPhysicalRangeRef()` 用来读取精确的物理 `<c>` 节点边界，适合排查底层 package 结构
 - `sheet.deleteCell()` 会真正移除 worksheet 里的 `<c>` 节点；如果你只是想保留样式占位但把值清空，继续用 `setCell(..., null)`
 - `workbook.getStyle()` 会读取 `styles.xml` 里的 `cellXfs` 样式定义；`workbook.updateStyle()` 会原位修改已有 `xf`；`workbook.cloneStyle()` 会基于已有 `xf` 追加一个新样式，并返回新的 `styleId`
 - `workbook.getFont()` / `updateFont()` / `cloneFont()` 会直接操作 `styles.xml` 里的 `<fonts>`；适合你想复用或维护 `fontId` 时使用
@@ -362,7 +368,7 @@ await workbook.save("output.xlsx");
 - `npm run bench:check`
   - 对 `res/monster.xlsx` 运行 5 轮基准，并校验 `benchmarks/monster-baseline.json` 里的非空单元格数量和耗时阈值
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5`
-  - 自定义文件路径和迭代次数
+  - 自定义文件路径和迭代次数；输出 JSON 会同时包含致密遍历结果 `result`、稀疏遍历结果 `sparseResult`，以及每个 sheet 的放大量统计
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5 --check benchmarks/monster-baseline.json`
   - 对任意基准文件执行回归检查；数量或耗时超出阈值时进程会以非零状态退出
 

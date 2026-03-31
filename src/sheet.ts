@@ -720,11 +720,20 @@ export class Sheet {
   }
 
   /**
-   * Reads the non-empty cell entries present in a row.
+   * Reads logical cell entries present in a row.
    *
    * `rowNumber` is 1-based.
    */
   getRowEntries(rowNumber: number): CellEntry[] {
+    return this.getPhysicalRowEntries(rowNumber).filter((cell) => isLogicalCellEntry(cell));
+  }
+
+  /**
+   * Reads physical worksheet `<c>` nodes present in a row.
+   *
+   * `rowNumber` is 1-based.
+   */
+  getPhysicalRowEntries(rowNumber: number): CellEntry[] {
     assertRowNumber(rowNumber);
 
     const row = this.getSheetIndex().rows.get(rowNumber);
@@ -761,11 +770,20 @@ export class Sheet {
   }
 
   /**
-   * Reads the non-empty cell entries present in a column.
+   * Reads logical cell entries present in a column.
    *
    * Numeric column indexes are 1-based.
    */
   getColumnEntries(column: number | string): CellEntry[] {
+    return this.getPhysicalColumnEntries(column).filter((cell) => isLogicalCellEntry(cell));
+  }
+
+  /**
+   * Reads physical worksheet `<c>` nodes present in a column.
+   *
+   * Numeric column indexes are 1-based.
+   */
+  getPhysicalColumnEntries(column: number | string): CellEntry[] {
     const columnNumber = normalizeColumnNumber(column);
     const entries: CellEntry[] = [];
     const index = this.getSheetIndex();
@@ -877,16 +895,45 @@ export class Sheet {
   }
 
   /**
-   * Returns all populated cell entries in row-major order.
+   * Returns all logical cell entries in row-major order.
    */
   getCellEntries(): CellEntry[] {
     return Array.from(this.iterCellEntries());
   }
 
   /**
-   * Iterates populated cells in row-major order.
+   * Returns all physical worksheet `<c>` nodes in row-major order.
+   */
+  getPhysicalCellEntries(): CellEntry[] {
+    return Array.from(this.iterPhysicalCellEntries());
+  }
+
+  /**
+   * Iterates logical cells in row-major order.
    */
   *iterCellEntries(): IterableIterator<CellEntry> {
+    const index = this.getSheetIndex();
+
+    for (const rowNumber of index.rowNumbers) {
+      const row = index.rows.get(rowNumber);
+      if (!row) {
+        continue;
+      }
+
+      for (const cell of row.cells) {
+        if (!isLogicalCellEntry(cell.snapshot)) {
+          continue;
+        }
+
+        yield createCellEntry(cell);
+      }
+    }
+  }
+
+  /**
+   * Iterates physical worksheet `<c>` nodes in row-major order.
+   */
+  *iterPhysicalCellEntries(): IterableIterator<CellEntry> {
     const index = this.getSheetIndex();
 
     for (const rowNumber of index.rowNumbers) {
@@ -902,14 +949,21 @@ export class Sheet {
   }
 
   /**
-   * Returns the current used range in A1 notation.
+   * Returns the current logical range in A1 notation.
    */
-  getUsedRange(): string | null {
+  getRangeRef(): string | null {
     return formatUsedRangeBounds(this.getSheetIndex().usedBounds);
   }
 
   /**
-   * Lists merged ranges in normalized A1 notation.
+   * Returns the current physical worksheet `<c>` bounds in A1 notation.
+   */
+  getPhysicalRangeRef(): string | null {
+    return formatUsedRangeBounds(this.getPhysicalBounds());
+  }
+
+  /**
+   * Returns the current used range in A1 notation.
    */
   getMergedRanges(): string[] {
     return parseMergedRanges(this.getSheetIndex().xml);
@@ -927,6 +981,35 @@ export class Sheet {
    */
   getFreezePane(): FreezePane | null {
     return parseSheetFreezePane(this.getSheetIndex().xml);
+  }
+
+  private getPhysicalBounds(): {
+    minRow: number;
+    maxRow: number;
+    minColumn: number;
+    maxColumn: number;
+  } | null {
+    const index = this.getSheetIndex();
+    let minRow = Number.POSITIVE_INFINITY;
+    let maxRow = 0;
+    let minColumn = Number.POSITIVE_INFINITY;
+    let maxColumn = 0;
+    let hasCells = false;
+
+    for (const rowNumber of index.rowNumbers) {
+      const row = index.rows.get(rowNumber);
+      if (!row || row.cells.length === 0) {
+        continue;
+      }
+
+      hasCells = true;
+      minRow = Math.min(minRow, rowNumber);
+      maxRow = Math.max(maxRow, rowNumber);
+      minColumn = Math.min(minColumn, row.cells[0]?.columnNumber ?? Number.POSITIVE_INFINITY);
+      maxColumn = Math.max(maxColumn, row.cells[row.cells.length - 1]?.columnNumber ?? 0);
+    }
+
+    return hasCells ? { minRow, maxRow, minColumn, maxColumn } : null;
   }
 
   /**
@@ -1938,4 +2021,8 @@ export class Sheet {
       normalizedSheetXml === nextSheetXml ? indexedSheet : buildSheetIndex(this.workbook, normalizedSheetXml);
     this.revision += 1;
   }
+}
+
+function isLogicalCellEntry(cell: Pick<CellEntry, "formula" | "value">): boolean {
+  return cell.formula !== null || cell.value !== null;
 }

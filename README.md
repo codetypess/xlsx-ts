@@ -151,7 +151,9 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.cloneRowStyle(rowNumber, patch?)`
 - `sheet.cloneColumnStyle(column, patch?)`
 - `sheet.getCellEntries()`
+- `sheet.getPhysicalCellEntries()`
 - `sheet.iterCellEntries()`
+- `sheet.iterPhysicalCellEntries()`
 - `sheet.rowCount`
 - `sheet.columnCount`
 - `sheet.getHeaders(headerRowNumber?)`
@@ -159,10 +161,13 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.getRecords(headerRowNumber?)`
 - `sheet.getColumn(column)`
 - `sheet.getColumnEntries(column)`
+- `sheet.getPhysicalColumnEntries(column)`
 - `sheet.getRow(rowNumber)`
 - `sheet.getRowEntries(rowNumber)`
+- `sheet.getPhysicalRowEntries(rowNumber)`
 - `sheet.getRange(range)`
-- `sheet.getUsedRange()`
+- `sheet.getRangeRef()`
+- `sheet.getPhysicalRangeRef()`
 - `sheet.getMergedRanges()`
 - `sheet.getAutoFilter()`
 - `sheet.getFreezePane()`
@@ -304,8 +309,9 @@ Notes:
 - `sheet.cell(address)` returns a reusable `Cell` handle whose parsed value/formula/style-index state is cached by sheet revision. It now also exposes `cell.style`, `cell.alignment`, `cell.font`, `cell.fill`, `cell.backgroundColor`, `cell.border`, `cell.numberFormat`, `cell.setStyle(patch)`, `cell.setAlignment(patch)`, `cell.setFont(patch)`, `cell.setFill(patch)`, `cell.setBackgroundColor(color)`, `cell.setBorder(patch)`, `cell.setNumberFormat(formatCode)`, and `cell.cloneStyle(patch?)`.
 - `sheet.cell()`, `getCell()`, `setCell()`, `getFormula()`, and `setFormula()` now support both `A1` addresses and `(rowNumber, column)` calls. Row and column indexes are 1-based.
 - Later `getCell()` and `getFormula()` calls use those indexes directly instead of running a full string match on every read.
-- `sheet.rowCount` and `sheet.columnCount` currently mean the maximum used row number and maximum used column number. Empty sheets return `0`.
-- `sheet.getCellEntries()`, `iterCellEntries()`, `getRowEntries()`, and `getColumnEntries()` expose the real worksheet `<c>` nodes with address, row/column indexes, type, style id, and value, which is useful for large or sparse sheet iteration.
+- `sheet.rowCount` and `sheet.columnCount` mean the logical used bounds based on cells that currently have a value or formula. Pure blank placeholder `<c>` nodes and blank-only physical rows do not extend the used range. Empty sheets return `0`.
+- `sheet.getCellEntries()`, `iterCellEntries()`, `getRowEntries()`, `getColumnEntries()`, and `getRangeRef()` are the default logical read APIs. They skip blank placeholder `<c>` nodes that have neither a value nor a formula, and they follow the logical used bounds.
+- `sheet.getPhysicalCellEntries()`, `iterPhysicalCellEntries()`, `getPhysicalRowEntries()`, `getPhysicalColumnEntries()`, and `getPhysicalRangeRef()` expose exact physical worksheet `<c>` node boundaries when you need to inspect low-level package structure.
 - `sheet.deleteCell()` removes the worksheet `<c>` node entirely; if you want to keep a styled placeholder but clear the value, continue using `setCell(..., null)`.
 - `workbook.getStyle()` reads `cellXfs` definitions from `styles.xml`, `workbook.updateStyle()` patches an existing `<xf>` in place, and `workbook.cloneStyle()` appends a new `<xf>` derived from an existing one and returns the new style id.
 - `workbook.getFont()`, `updateFont()`, and `cloneFont()` work directly on the `<fonts>` section in `styles.xml`, which is useful when you want to manage reusable `fontId` values explicitly.
@@ -367,7 +373,7 @@ Common commands:
 - `npm run bench:check`
   - Run a 5-iteration benchmark on `res/monster.xlsx` and validate the non-null count plus time threshold from `benchmarks/monster-baseline.json`
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5`
-  - Run the benchmark with a custom file path and iteration count
+  - Run the benchmark with a custom file path and iteration count; the JSON output includes both dense traversal (`result`) and sparse traversal (`sparseResult`) plus per-sheet amplification stats
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5 --check benchmarks/monster-baseline.json`
   - Run the regression check against any benchmark file; the process exits non-zero when the workbook count or timing threshold is exceeded
 

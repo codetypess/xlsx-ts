@@ -2096,7 +2096,7 @@ test("range APIs read and write rectangular values", async () => {
   const workbook = Workbook.fromEntries(entries);
   const sheet = workbook.getSheet("Sheet1");
 
-  assert.equal(sheet.getUsedRange(), "A1");
+  assert.equal(sheet.getRangeRef(), "A1");
   assert.deepEqual(sheet.getRange("A1:B2"), [["Hello", null], [null, null]]);
 
   sheet.setRange("B2", [
@@ -2104,7 +2104,7 @@ test("range APIs read and write rectangular values", async () => {
     [3, 4],
   ]);
 
-  assert.equal(sheet.getUsedRange(), "A1:C3");
+  assert.equal(sheet.getRangeRef(), "A1:C3");
   assert.deepEqual(sheet.getRange("A1:C3"), [
     ["Hello", null, null],
     [null, 1, 2],
@@ -2136,19 +2136,19 @@ test("sheet rowCount and columnCount track the used bounds", async () => {
 
   assert.equal(sheet.rowCount, 5);
   assert.equal(sheet.columnCount, 3);
-  assert.equal(sheet.getUsedRange(), "C5");
+  assert.equal(sheet.getRangeRef(), "C5");
 
   sheet.setCell("A1", "Top");
 
   assert.equal(sheet.rowCount, 5);
   assert.equal(sheet.columnCount, 3);
-  assert.equal(sheet.getUsedRange(), "A1:C5");
+  assert.equal(sheet.getRangeRef(), "A1:C5");
 
   sheet.deleteColumn("B");
 
   assert.equal(sheet.rowCount, 5);
   assert.equal(sheet.columnCount, 2);
-  assert.equal(sheet.getUsedRange(), "A1:B5");
+  assert.equal(sheet.getRangeRef(), "A1:B5");
 });
 
 test("insertColumn shifts cell addresses, formulas, and merged ranges together", async () => {
@@ -2186,7 +2186,7 @@ test("insertColumn shifts cell addresses, formulas, and merged ranges together",
   assert.equal(sheet.getFormula("D1"), "SUM(A1:C1)");
   assert.equal(sheet.getFormula("A2"), "Sheet1!C1");
   assert.deepEqual(sheet.getMergedRanges(), ["C2:D2"]);
-  assert.equal(sheet.getUsedRange(), "A1:D2");
+  assert.equal(sheet.getRangeRef(), "A1:D2");
 
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<c r="C1"><v>2<\/v><\/c>/);
@@ -2233,7 +2233,7 @@ test("insertRow shifts cell addresses, formulas, and merged ranges together", as
   assert.equal(sheet.getFormula("B1"), "SUM(A3:B3)");
   assert.equal(sheet.getFormula("A4"), "Sheet1!A3");
   assert.deepEqual(sheet.getMergedRanges(), ["A3:B4"]);
-  assert.equal(sheet.getUsedRange(), "A1:B4");
+  assert.equal(sheet.getRangeRef(), "A1:B4");
 
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<row r="3">[\s\S]*<c r="A3"><v>2<\/v><\/c>[\s\S]*<c r="B3"><v>4<\/v><\/c>[\s\S]*<\/row>/);
@@ -2378,7 +2378,7 @@ test("deleteColumn shifts cells, shrinks ranges, and emits #REF! for deleted ref
   assert.equal(sheet.getCell("C1"), 2);
   assert.equal(sheet.getFormula("C1"), "#REF!");
   assert.deepEqual(sheet.getMergedRanges(), ["B2:C2"]);
-  assert.equal(sheet.getUsedRange(), "A1:C2");
+  assert.equal(sheet.getRangeRef(), "A1:C2");
 
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.doesNotMatch(sheetXml, /<c r="B2"><v>4<\/v><\/c>/);
@@ -2477,7 +2477,7 @@ test("deleteRow shifts cells, shrinks ranges, and emits #REF! for deleted refs",
   assert.equal(sheet.getFormula("A2"), "#REF!");
   assert.equal(sheet.getCell("A3"), 4);
   assert.deepEqual(sheet.getMergedRanges(), ["A2:B3"]);
-  assert.equal(sheet.getUsedRange(), "A1:B3");
+  assert.equal(sheet.getRangeRef(), "A1:B3");
 
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.doesNotMatch(sheetXml, /<row r="4">/);
@@ -2772,7 +2772,7 @@ test("row APIs read sparse rows and write from a column offset", async () => {
   sheet.setRow(4, ["Name", null, "Score"], 2);
 
   assert.deepEqual(sheet.getRow(4), [null, "Name", null, "Score"]);
-  assert.equal(sheet.getUsedRange(), "A1:D4");
+  assert.equal(sheet.getRangeRef(), "A1:D4");
 
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<row r="4"><c r="B4" t="inlineStr"><is><t>Name<\/t><\/is><\/c><c r="C4"\/><c r="D4" t="inlineStr"><is><t>Score<\/t><\/is><\/c><\/row>/);
@@ -2791,7 +2791,7 @@ test("column APIs read sparse columns and write from a row offset", async () => 
   sheet.setColumn("C", ["Q1", null, "Q3"], 2);
 
   assert.deepEqual(sheet.getColumn("C"), [null, "Q1", null, "Q3"]);
-  assert.equal(sheet.getUsedRange(), "A1:C4");
+  assert.equal(sheet.getRangeRef(), "A1:C4");
 
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<row r="2"><c r="C2" t="inlineStr"><is><t>Q1<\/t><\/is><\/c><\/row>/);
@@ -2812,6 +2812,13 @@ test("entry APIs iterate existing worksheet cells without dense null scans", asy
     summarizeCellEntries(sheet.getRowEntries(2)),
     [
       { address: "A2", rowNumber: 2, columnNumber: 1, type: "string", value: "Name" },
+      { address: "C2", rowNumber: 2, columnNumber: 3, type: "number", value: 98 },
+    ],
+  );
+  assert.deepEqual(
+    summarizeCellEntries(sheet.getPhysicalRowEntries(2)),
+    [
+      { address: "A2", rowNumber: 2, columnNumber: 1, type: "string", value: "Name" },
       { address: "B2", rowNumber: 2, columnNumber: 2, type: "blank", value: null },
       { address: "C2", rowNumber: 2, columnNumber: 3, type: "number", value: 98 },
     ],
@@ -2823,9 +2830,22 @@ test("entry APIs iterate existing worksheet cells without dense null scans", asy
       { address: "C4", rowNumber: 4, columnNumber: 3, type: "string", value: "Tail" },
     ],
   );
+  assert.deepEqual(
+    summarizeCellEntries(sheet.getPhysicalColumnEntries("C")),
+    [
+      { address: "C2", rowNumber: 2, columnNumber: 3, type: "number", value: 98 },
+      { address: "C4", rowNumber: 4, columnNumber: 3, type: "string", value: "Tail" },
+    ],
+  );
 
   const allEntries = summarizeCellEntries(sheet.getCellEntries());
   assert.deepEqual(allEntries, [
+    { address: "A1", rowNumber: 1, columnNumber: 1, type: "string", value: "Hello" },
+    { address: "A2", rowNumber: 2, columnNumber: 1, type: "string", value: "Name" },
+    { address: "C2", rowNumber: 2, columnNumber: 3, type: "number", value: 98 },
+    { address: "C4", rowNumber: 4, columnNumber: 3, type: "string", value: "Tail" },
+  ]);
+  assert.deepEqual(summarizeCellEntries(sheet.getPhysicalCellEntries()), [
     { address: "A1", rowNumber: 1, columnNumber: 1, type: "string", value: "Hello" },
     { address: "A2", rowNumber: 2, columnNumber: 1, type: "string", value: "Name" },
     { address: "B2", rowNumber: 2, columnNumber: 2, type: "blank", value: null },
@@ -2833,6 +2853,13 @@ test("entry APIs iterate existing worksheet cells without dense null scans", asy
     { address: "C4", rowNumber: 4, columnNumber: 3, type: "string", value: "Tail" },
   ]);
   assert.deepEqual(summarizeCellEntries([...sheet.iterCellEntries()]), allEntries);
+  assert.deepEqual(summarizeCellEntries([...sheet.iterPhysicalCellEntries()]), [
+    { address: "A1", rowNumber: 1, columnNumber: 1, type: "string", value: "Hello" },
+    { address: "A2", rowNumber: 2, columnNumber: 1, type: "string", value: "Name" },
+    { address: "B2", rowNumber: 2, columnNumber: 2, type: "blank", value: null },
+    { address: "C2", rowNumber: 2, columnNumber: 3, type: "number", value: 98 },
+    { address: "C4", rowNumber: 4, columnNumber: 3, type: "string", value: "Tail" },
+  ]);
 });
 
 test("deleteCell removes worksheet cell nodes instead of leaving blank placeholders", async () => {
@@ -2847,7 +2874,7 @@ test("deleteCell removes worksheet cell nodes instead of leaving blank placehold
 
   assert.equal(sheet.getCell("A1"), null);
   assert.equal(sheet.getCell(4, 3), null);
-  assert.equal(sheet.getUsedRange(), null);
+  assert.equal(sheet.getRangeRef(), null);
   assert.deepEqual(sheet.getCellEntries(), []);
 
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");

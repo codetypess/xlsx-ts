@@ -80,7 +80,7 @@ export function buildSheetIndex(workbook: Workbook, sheetXml: string): SheetInde
   let maxRow = 0;
   let minColumn = Number.POSITIVE_INFINITY;
   let maxColumn = 0;
-  let hasCells = false;
+  let hasUsedBounds = false;
   let previousRowNumber = 0;
   let rowsAreSorted = true;
   let cursor = sheetDataInnerStart;
@@ -172,13 +172,7 @@ export function buildSheetIndex(workbook: Workbook, sheetXml: string): SheetInde
 
         row.cells.push(cell);
         row.cellsByColumn[columnNumber] = cell;
-        row.maxColumnNumber = Math.max(row.maxColumnNumber, columnNumber);
         cells.set(address, cell);
-        hasCells = true;
-        minRow = Math.min(minRow, rowNumber);
-        maxRow = Math.max(maxRow, rowNumber);
-        minColumn = Math.min(minColumn, columnNumber);
-        maxColumn = Math.max(maxColumn, columnNumber);
 
         if (columnNumber < previousColumnNumber) {
           cellsAreSorted = false;
@@ -191,6 +185,18 @@ export function buildSheetIndex(workbook: Workbook, sheetXml: string): SheetInde
       if (!cellsAreSorted) {
         row.cells.sort((left, right) => left.columnNumber - right.columnNumber);
       }
+    }
+
+    const rowHasUsedCells = hasUsedCells(row.cells);
+    row.maxColumnNumber = resolveLogicalRowMaxColumnNumber(row.cells);
+    if (row.maxColumnNumber > 0) {
+      minColumn = Math.min(minColumn, row.cells[0]?.columnNumber ?? row.maxColumnNumber);
+      maxColumn = Math.max(maxColumn, row.maxColumnNumber);
+    }
+    if (rowHasUsedCells) {
+      hasUsedBounds = true;
+      minRow = Math.min(minRow, rowNumber);
+      maxRow = Math.max(maxRow, rowNumber);
     }
 
     rows.set(rowNumber, row);
@@ -212,10 +218,61 @@ export function buildSheetIndex(workbook: Workbook, sheetXml: string): SheetInde
     cells,
     rows,
     rowNumbers,
-    usedBounds: hasCells ? { minRow, maxRow, minColumn, maxColumn } : null,
+    usedBounds: hasUsedBounds ? { minRow, maxRow, minColumn, maxColumn } : null,
     sheetDataInnerStart,
     sheetDataInnerEnd,
   };
+}
+
+function resolveLogicalRowMaxColumnNumber(cells: LocatedCell[]): number {
+  if (cells.length === 0) {
+    return 0;
+  }
+
+  let lastUsedIndex = -1;
+
+  for (let index = cells.length - 1; index >= 0; index -= 1) {
+    if (isUsedCell(cells[index]?.snapshot)) {
+      lastUsedIndex = index;
+      break;
+    }
+  }
+
+  if (lastUsedIndex === -1) {
+    let logicalMaxColumnNumber = cells[0]?.columnNumber ?? 0;
+
+    for (let index = 1; index < cells.length; index += 1) {
+      const columnNumber = cells[index]?.columnNumber ?? 0;
+      if (columnNumber > logicalMaxColumnNumber + 1) {
+        break;
+      }
+
+      logicalMaxColumnNumber = columnNumber;
+    }
+
+    return logicalMaxColumnNumber;
+  }
+
+  let logicalMaxColumnNumber = cells[lastUsedIndex]?.columnNumber ?? 0;
+
+  for (let index = lastUsedIndex + 1; index < cells.length; index += 1) {
+    const cell = cells[index];
+    if (!cell || isUsedCell(cell.snapshot) || cell.columnNumber > logicalMaxColumnNumber + 1) {
+      break;
+    }
+
+    logicalMaxColumnNumber = cell.columnNumber;
+  }
+
+  return logicalMaxColumnNumber;
+}
+
+function isUsedCell(snapshot: CellSnapshot | undefined): boolean {
+  return snapshot !== undefined && (snapshot.formula !== null || snapshot.value !== null);
+}
+
+function hasUsedCells(cells: LocatedCell[]): boolean {
+  return cells.some((cell) => isUsedCell(cell.snapshot));
 }
 
 export function parseCellAddressFast(address: string): { rowNumber: number; columnNumber: number } {

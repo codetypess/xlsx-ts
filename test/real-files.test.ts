@@ -28,15 +28,15 @@ test("task.xlsx exposes stable workbook structure", async () => {
       name: sheet.name,
       rowCount: sheet.rowCount,
       columnCount: sheet.columnCount,
-      usedRange: sheet.getUsedRange(),
+      usedRange: sheet.getRangeRef(),
     })),
     [
       { name: "define", rowCount: 24, columnCount: 9, usedRange: "A1:I24" },
       { name: "conf", rowCount: 11, columnCount: 5, usedRange: "A1:E11" },
       { name: "main", rowCount: 17, columnCount: 24, usedRange: "A1:X17" },
       { name: "branch", rowCount: 16, columnCount: 24, usedRange: "A1:X16" },
-      { name: "weekly", rowCount: 19, columnCount: 9, usedRange: "A1:I19" },
-      { name: "events", rowCount: 19, columnCount: 10, usedRange: "A1:J19" },
+      { name: "weekly", rowCount: 9, columnCount: 9, usedRange: "A1:I9" },
+      { name: "events", rowCount: 9, columnCount: 10, usedRange: "A1:J9" },
       { name: "exchange", rowCount: 9, columnCount: 12, usedRange: "A1:L9" },
     ],
   );
@@ -61,10 +61,10 @@ test("monster.xlsx opens with stable workbook metadata and roundtrips cleanly", 
       name: sheet.name,
       rowCount: sheet.rowCount,
       columnCount: sheet.columnCount,
-      usedRange: sheet.getUsedRange(),
+      usedRange: sheet.getRangeRef(),
     })),
     [
-      { name: "troop", rowCount: 965, columnCount: 83, usedRange: "A1:CE965" },
+      { name: "troop", rowCount: 960, columnCount: 83, usedRange: "A1:CE960" },
       { name: "td_troop", rowCount: 3874, columnCount: 81, usedRange: "A1:CC3874" },
       { name: "td_soldier", rowCount: 4334, columnCount: 71, usedRange: "A1:BS4334" },
       { name: "prop", rowCount: 327, columnCount: 17, usedRange: "A1:Q327" },
@@ -80,6 +80,25 @@ test("monster.xlsx opens with stable workbook metadata and roundtrips cleanly", 
   assert.equal(result.ok, true);
   assert.equal(result.entries, 51);
   assert.deepEqual(result.diffs, []);
+});
+
+test("event.xlsx ignores trailing blank placeholder cells in used range", async () => {
+  const workbook = await Workbook.open(resolve("res/event.xlsx"));
+  const [sheet] = workbook.getSheets();
+
+  assert.equal(workbook.listEntries().length, 21);
+  assert.equal(sheet?.name, "event");
+  assert.equal(sheet?.rowCount, 783);
+  assert.equal(sheet?.columnCount, 16);
+  assert.equal(sheet?.getRangeRef(), "A1:P783");
+  assert.equal(sheet?.getPhysicalRangeRef(), "A1:XEQ783");
+  assert.equal(sheet?.getRow(2).length, 13);
+  assert.equal(sheet?.getRow(12).length, 15);
+  assert.equal(sheet?.getCell("XEP2"), null);
+  assert.equal(sheet?.cell("XEP2").exists, true);
+  assert.equal(sheet?.cell("XEQ2").exists, true);
+  assert.equal(sheet?.getCellEntries().length, 9427);
+  assert.equal(sheet?.getPhysicalCellEntries().length, 10456);
 });
 
 test("openpyxl sample opens with stable workbook structure and roundtrips cleanly", async () => {
@@ -105,7 +124,7 @@ test("openpyxl sample opens with stable workbook structure and roundtrips cleanl
       value: "'Data'!$A$1:$C$3",
     },
   ]);
-  assert.equal(dataSheet.getUsedRange(), "A1:D3");
+  assert.equal(dataSheet.getRangeRef(), "A1:D3");
   assert.equal(dataSheet.getAutoFilter(), "A1:C3");
   assert.deepEqual(dataSheet.getFreezePane(), {
     columnCount: 1,
@@ -173,7 +192,7 @@ test("xlsxwriter sample opens with stable workbook structure and roundtrips clea
       value: "Data!$A$1:$C$3",
     },
   ]);
-  assert.equal(dataSheet.getUsedRange(), "A1:E3");
+  assert.equal(dataSheet.getRangeRef(), "A1:E3");
   assert.equal(dataSheet.getAutoFilter(), "A1:C3");
   assert.deepEqual(dataSheet.getFreezePane(), {
     columnCount: 1,

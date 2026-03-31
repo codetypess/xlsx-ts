@@ -1,4 +1,4 @@
-import { CliZipAdapter } from "../src/zip-cli.js";
+import { Zip } from "../src/zip.js";
 import { escapeXmlText, getXmlAttr } from "../src/utils/xml.js";
 
 const inputPath = process.argv[2];
@@ -8,7 +8,7 @@ if (!inputPath) {
   throw new Error("Usage: node --import tsx scripts/sanitize-workbook.ts <input.xlsx> [output.xlsx]");
 }
 
-const adapter = new CliZipAdapter();
+const adapter = new Zip();
 const entries = await adapter.readArchive(inputPath);
 const sanitizedEntries = entries.map((entry) => ({
   path: entry.path,
@@ -22,10 +22,14 @@ await adapter.writeArchive(outputPath, sanitizedEntries);
 function shouldSanitizeTextEntry(path: string): boolean {
   return (
     path === "xl/sharedStrings.xml" ||
+    path === "xl/workbook.xml" ||
     path === "docProps/core.xml" ||
     path === "docProps/app.xml" ||
+    path === "docProps/custom.xml" ||
+    /^xl\/comments\d+\.xml$/.test(path) ||
+    /^xl\/externalLinks\/externalLink\d+\.xml$/.test(path) ||
     /^xl\/worksheets\/sheet\d+\.xml$/.test(path) ||
-    /^xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(path)
+    /\.rels$/.test(path)
   );
 }
 
@@ -34,12 +38,24 @@ function sanitizeEntryXml(path: string, xml: string): string {
     return sanitizeSharedStringsXml(xml);
   }
 
+  if (path === "xl/workbook.xml") {
+    return sanitizeWorkbookXml(xml);
+  }
+
   if (/^xl\/worksheets\/sheet\d+\.xml$/.test(path)) {
     return sanitizeWorksheetXml(xml);
   }
 
-  if (/^xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(path)) {
+  if (/\.rels$/.test(path)) {
     return sanitizeRelationshipsXml(xml);
+  }
+
+  if (/^xl\/externalLinks\/externalLink\d+\.xml$/.test(path)) {
+    return sanitizeExternalLinkXml(xml);
+  }
+
+  if (/^xl\/comments\d+\.xml$/.test(path)) {
+    return sanitizeCommentsXml(xml);
   }
 
   if (path === "docProps/core.xml") {
@@ -48,6 +64,10 @@ function sanitizeEntryXml(path: string, xml: string): string {
 
   if (path === "docProps/app.xml") {
     return sanitizeAppPropertiesXml(xml);
+  }
+
+  if (path === "docProps/custom.xml") {
+    return sanitizeCustomPropertiesXml(xml);
   }
 
   return xml;
@@ -129,6 +149,13 @@ function sanitizeRelationshipsXml(xml: string): string {
   });
 }
 
+function sanitizeWorkbookXml(xml: string): string {
+  let nextXml = xml.replace(/\burl="([^"]*)"/g, () => `url="${escapeXmlText("https://example.invalid/workbook")}"`);
+  nextXml = nextXml.replace(/\bdocumentId="([^"]*)"/g, 'documentId="sanitized-document-id"');
+  nextXml = nextXml.replace(/\bxr10:uidLastSave="([^"]*)"/g, 'xr10:uidLastSave="{00000000-0000-0000-0000-000000000000}"');
+  return nextXml;
+}
+
 function sanitizeCorePropertiesXml(xml: string): string {
   const replacements: Record<string, string> = {
     "dc:title": "Sanitized Workbook",
@@ -152,6 +179,78 @@ function sanitizeAppPropertiesXml(xml: string): string {
   return replaceTagText(replaceTagText(xml, "Company", "Sanitized"), "Manager", "Sanitized");
 }
 
+function sanitizeCustomPropertiesXml(xml: string): string {
+  let stringIndex = 0;
+  let nextXml = xml.replace(/<vt:lpwstr>([\s\S]*?)<\/vt:lpwstr>/g, (_match, textSource) => {
+    const sanitized = buildMaskedText(Math.max(8, decodeXmlEntities(textSource).length), stringIndex);
+    stringIndex += 1;
+    return `<vt:lpwstr>${escapeXmlText(sanitized)}</vt:lpwstr>`;
+  });
+
+  nextXml = nextXml.replace(/<vt:i4>([\s\S]*?)<\/vt:i4>/g, (_match, valueSource) => {
+    return `<vt:i4>${escapeXmlText(buildMaskedNumber(valueSource, 0))}</vt:i4>`;
+  });
+
+  nextXml = nextXml.replace(/<vt:bool>([\s\S]*?)<\/vt:bool>/g, "<vt:bool>false</vt:bool>");
+  return nextXml;
+}
+
+function sanitizeCommentsXml(xml: string): string {
+  let authorIndex = 0;
+  let textIndex = 0;
+  let nextXml = xml.replace(/<author>([\s\S]*?)<\/author>/g, () => {
+    authorIndex += 1;
+    return `<author>Author ${authorIndex}</author>`;
+  });
+
+  nextXml = nextXml.replace(/<t\b([^>]*?)(\/>|>([\s\S]*?)<\/t>)/g, (_match, attributesSource, tail, textSource) => {
+    const length = tail === "/>" ? 0 : decodeXmlEntities(textSource).length;
+    const sanitized = buildMaskedText(length, textIndex);
+    textIndex += 1;
+    return `<t${attributesSource}>${escapeXmlText(sanitized)}</t>`;
+  });
+
+  return nextXml;
+}
+
+function sanitizeExternalLinkXml(xml: string): string {
+  let textIndex = 0;
+  let numberIndex = 0;
+  let sheetIndex = 0;
+  let nextXml = xml.replace(/<sheetName\b([^>]*?)\/>/g, (_match, attributesSource) => {
+    const currentIndex = sheetIndex;
+    sheetIndex += 1;
+    return replaceAttrValue(`<sheetName${attributesSource}/>`, "val", `Sheet${currentIndex + 1}`);
+  });
+
+  nextXml = nextXml.replace(/<cell\b([^>]*?)(\/>|>([\s\S]*?)<\/cell>)/g, (match, attributesSource, tail, innerXml) => {
+    if (tail === "/>") {
+      return match;
+    }
+
+    const rawType = getXmlAttr(attributesSource.trim(), "t") ?? null;
+    const nextInnerXml = innerXml.replace(/<v\b([^>]*?)(\/>|>([\s\S]*?)<\/v>)/g, (_valueMatch, valueAttributesSource, valueTail, valueSource) => {
+      if (valueTail === "/>") {
+        return `<v${valueAttributesSource}/>`;
+      }
+
+      if (rawType === "str") {
+        const sanitized = buildMaskedText(decodeXmlEntities(valueSource).length, textIndex);
+        textIndex += 1;
+        return `<v${valueAttributesSource}>${escapeXmlText(sanitized)}</v>`;
+      }
+
+      const sanitized = buildMaskedNumber(valueSource, numberIndex);
+      numberIndex += 1;
+      return `<v${valueAttributesSource}>${escapeXmlText(sanitized)}</v>`;
+    });
+
+    return replaceCellInnerXml(match, nextInnerXml, "cell");
+  });
+
+  return nextXml;
+}
+
 function replaceTagText(xml: string, tagName: string, value: string): string {
   const tagPattern = new RegExp(`<${escapeTagName(tagName)}\\b[^>]*>[\\s\\S]*?<\\/${escapeTagName(tagName)}>`);
   const exactPattern = new RegExp(`(<${escapeTagName(tagName)}\\b[^>]*>)[\\s\\S]*?(<\\/${escapeTagName(tagName)}>)`);
@@ -165,10 +264,21 @@ function escapeTagName(tagName: string): string {
   return tagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function replaceCellInnerXml(cellXml: string, innerXml: string): string {
+function replaceCellInnerXml(cellXml: string, innerXml: string, tagName = "c"): string {
   const innerStart = cellXml.indexOf(">") + 1;
-  const innerEnd = cellXml.lastIndexOf("</c>");
+  const innerEnd = cellXml.lastIndexOf(`</${tagName}>`);
   return `${cellXml.slice(0, innerStart)}${innerXml}${cellXml.slice(innerEnd)}`;
+}
+
+function replaceAttrValue(tagSource: string, attributeName: string, value: string): string {
+  const escapedValue = escapeXmlText(value);
+  const quotedAttrPattern = new RegExp(`\\b${escapeTagName(attributeName)}="([^"]*)"`);
+
+  if (quotedAttrPattern.test(tagSource)) {
+    return tagSource.replace(quotedAttrPattern, `${attributeName}="${escapedValue}"`);
+  }
+
+  return tagSource;
 }
 
 function buildMaskedFormula(rawType: string | null, valueSource: string | undefined, seed: number): string {

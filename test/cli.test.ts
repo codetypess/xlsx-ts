@@ -46,8 +46,9 @@ test("inspect reports workbook structure as JSON", async () => {
         columnCount: 1,
         headers: ["Hello"],
         name: "Sheet1",
+        physicalRangeRef: "A1",
+        rangeRef: "A1",
         rowCount: 1,
-        usedRange: "A1",
         visibility: "visible",
       },
     ]);
