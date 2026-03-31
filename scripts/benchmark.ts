@@ -12,6 +12,17 @@ export interface BenchmarkResult {
   visitedCells: number;
 }
 
+export interface BatchWriteBenchmarkResult {
+  mode: "batch-write";
+  runs: number[];
+  averageMs: number;
+  sheet: string;
+  writes: number;
+  targetRange: string;
+  rowCount: number;
+  columnCount: number;
+}
+
 export interface SheetBenchmarkSummary {
   name: string;
   rowCount: number;
@@ -34,6 +45,9 @@ export interface BenchmarkBaseline {
   expectedNonNull: number;
   maxAverageMs?: number;
   maxSparseAverageMs?: number;
+  expectedBatchWriteSheet?: string;
+  expectedBatchWriteWrites?: number;
+  maxBatchWriteAverageMs?: number;
 }
 
 export async function runBenchmark(options: {
@@ -44,6 +58,7 @@ export async function runBenchmark(options: {
   iterations: number;
   result: BenchmarkResult;
   sparseResult: BenchmarkResult;
+  writeResult: BatchWriteBenchmarkResult;
   comparison: BenchmarkComparison;
   sheets: SheetBenchmarkSummary[];
 }> {
@@ -52,6 +67,7 @@ export async function runBenchmark(options: {
   const summary = await summarizeWorkbook(filePath);
   const result = await benchmark(iterations, "dense", () => benchmarkDenseWorkbook(filePath));
   const sparseResult = await benchmark(iterations, "sparse", () => benchmarkSparseWorkbook(filePath));
+  const writeResult = await benchmarkBatchWrites(filePath, iterations);
   const comparison = {
     denseVisitedCells: result.visitedCells,
     sparseVisitedCells: sparseResult.visitedCells,
@@ -64,6 +80,7 @@ export async function runBenchmark(options: {
     iterations,
     result,
     sparseResult,
+    writeResult,
     comparison,
     sheets: summary,
   };
@@ -135,6 +152,107 @@ async function benchmarkSparseWorkbook(filePath: string): Promise<{ nonNull: num
   }
 
   return { nonNull, visitedCells };
+}
+
+async function benchmarkBatchWrites(filePath: string, iterations: number): Promise<BatchWriteBenchmarkResult> {
+  const runs: number[] = [];
+  let summary:
+    | Omit<BatchWriteBenchmarkResult, "averageMs" | "mode" | "runs">
+    | undefined;
+
+  for (let index = 0; index < iterations; index += 1) {
+    const run = await benchmarkBatchWriteWorkbook(filePath);
+    runs.push(run.elapsedMs);
+
+    if (!summary) {
+      summary = {
+        columnCount: run.columnCount,
+        rowCount: run.rowCount,
+        sheet: run.sheet,
+        targetRange: run.targetRange,
+        writes: run.writes,
+      };
+    }
+  }
+
+  if (!summary) {
+    throw new Error("Batch write benchmark did not produce any runs");
+  }
+
+  return {
+    mode: "batch-write",
+    runs,
+    averageMs: Number((runs.reduce((sum, value) => sum + value, 0) / runs.length).toFixed(1)),
+    ...summary,
+  };
+}
+
+async function benchmarkBatchWriteWorkbook(filePath: string): Promise<{
+  elapsedMs: number;
+  sheet: string;
+  writes: number;
+  targetRange: string;
+  rowCount: number;
+  columnCount: number;
+}> {
+  const workbook = await Workbook.open(filePath);
+  const sheet = selectBatchWriteTargetSheet(workbook);
+  const scenario = resolveBatchWriteScenario(sheet);
+  const startedAt = performance.now();
+
+  sheet.batch((currentSheet) => {
+    for (let offset = 0; offset < scenario.writes; offset += 1) {
+      currentSheet.setCell(scenario.startRow + offset, 1, 900_000 + offset);
+    }
+  });
+
+  return {
+    elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
+    sheet: sheet.name,
+    writes: scenario.writes,
+    targetRange: scenario.targetRange,
+    rowCount: sheet.rowCount,
+    columnCount: sheet.columnCount,
+  };
+}
+
+function selectBatchWriteTargetSheet(workbook: Workbook) {
+  const sheets = workbook.getSheets();
+  const [firstSheet] = sheets;
+  if (!firstSheet) {
+    throw new Error("Workbook has no worksheets to benchmark");
+  }
+
+  let targetSheet = firstSheet;
+  let maxPhysicalCellCount = firstSheet.getPhysicalCellEntries().length;
+
+  for (let index = 1; index < sheets.length; index += 1) {
+    const sheet = sheets[index]!;
+    const physicalCellCount = sheet.getPhysicalCellEntries().length;
+    if (physicalCellCount > maxPhysicalCellCount) {
+      targetSheet = sheet;
+      maxPhysicalCellCount = physicalCellCount;
+    }
+  }
+
+  return targetSheet;
+}
+
+function resolveBatchWriteScenario(sheet: ReturnType<Workbook["getSheets"]>[number]): {
+  startRow: number;
+  writes: number;
+  targetRange: string;
+} {
+  const startRow = sheet.rowCount >= 2 ? 2 : 1;
+  const maxWritableExistingRows = Math.max(sheet.rowCount - startRow + 1, 1);
+  const writes = Math.min(30, maxWritableExistingRows);
+  const endRow = startRow + writes - 1;
+
+  return {
+    startRow,
+    writes,
+    targetRange: writes === 1 ? `A${startRow}` : `A${startRow}:A${endRow}`,
+  };
 }
 
 async function summarizeWorkbook(filePath: string): Promise<SheetBenchmarkSummary[]> {
@@ -248,6 +366,18 @@ function validateAgainstBaseline(
 
   if (baseline.maxSparseAverageMs !== undefined && result.sparseResult.averageMs > baseline.maxSparseAverageMs) {
     failures.push(`Sparse average ${result.sparseResult.averageMs}ms exceeded ${baseline.maxSparseAverageMs}ms`);
+  }
+
+  if (baseline.expectedBatchWriteSheet !== undefined && result.writeResult.sheet !== baseline.expectedBatchWriteSheet) {
+    failures.push(`Expected batch write sheet=${baseline.expectedBatchWriteSheet}, got ${result.writeResult.sheet}`);
+  }
+
+  if (baseline.expectedBatchWriteWrites !== undefined && result.writeResult.writes !== baseline.expectedBatchWriteWrites) {
+    failures.push(`Expected batch write writes=${baseline.expectedBatchWriteWrites}, got ${result.writeResult.writes}`);
+  }
+
+  if (baseline.maxBatchWriteAverageMs !== undefined && result.writeResult.averageMs > baseline.maxBatchWriteAverageMs) {
+    failures.push(`Batch write average ${result.writeResult.averageMs}ms exceeded ${baseline.maxBatchWriteAverageMs}ms`);
   }
 
   return failures;

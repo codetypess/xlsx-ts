@@ -27,6 +27,8 @@ import {
   buildSheetIndex,
   getLocatedCell,
   parseCellSnapshot,
+  type LocatedCell,
+  type LocatedRow,
   type SheetIndex,
 } from "./sheet/sheet-index.js";
 import {
@@ -178,6 +180,8 @@ export class Sheet {
   readonly relationshipId: string;
 
   private readonly cellHandles = new Map<string, Cell>();
+  private hasPendingCellMutations = false;
+  private readonly pendingCellMutations = new Map<string, PendingCellMutation>();
   private hasPendingBatchWrite = false;
   private revision = 0;
   private readonly workbook: Workbook;
@@ -1443,13 +1447,25 @@ export class Sheet {
   setCell(address: string, value: CellValue): void;
   setCell(rowNumber: number, column: number | string, value: CellValue): void;
   setCell(addressOrRowNumber: string | number, columnOrValue: number | string | CellValue, value?: CellValue): void {
-    const normalizedAddress = resolveCellAddress(addressOrRowNumber, typeof addressOrRowNumber === "number" ? columnOrValue as number | string : undefined);
-    const existingCell = getLocatedCell(this.getSheetIndex(), normalizedAddress);
-    const nextValue = resolveSetCellValue(addressOrRowNumber, columnOrValue, value);
-    this.writeCellXml(
-      normalizedAddress,
-      buildValueCellXml(normalizedAddress, nextValue, existingCell?.attributesSource),
+    const normalizedAddress = resolveCellAddress(
+      addressOrRowNumber,
+      typeof addressOrRowNumber === "number" ? columnOrValue as number | string : undefined,
     );
+    const currentCell = this.getCurrentCellWriteState(normalizedAddress);
+    const nextValue = resolveSetCellValue(addressOrRowNumber, columnOrValue, value);
+    const nextCellXml = buildValueCellXml(normalizedAddress, nextValue, currentCell.attributesSource);
+
+    if (this.workbook.isBatching()) {
+      this.stagePendingCellMutation(normalizedAddress, {
+        attributesSource: extractCellAttributesSource(nextCellXml),
+        kind: "set",
+        snapshot: buildValueCellSnapshot(nextValue, currentCell.snapshot.styleId),
+        xml: nextCellXml,
+      });
+      return;
+    }
+
+    this.writeCellXml(normalizedAddress, nextCellXml);
   }
 
   /**
@@ -1469,18 +1485,25 @@ export class Sheet {
       typeof addressOrRowNumber === "number" ? (columnOrStyleId as number | string) : undefined,
     );
     const nextStyleId = resolveSetStyleId(addressOrRowNumber, columnOrStyleId, styleId);
-    const index = this.getSheetIndex();
-    const existingCell = getLocatedCell(index, normalizedAddress);
-
-    this.writeCellXml(
+    const currentCell = this.getCurrentCellWriteState(normalizedAddress);
+    const nextCellXml = buildStyledCellXml(
       normalizedAddress,
-      buildStyledCellXml(
-        normalizedAddress,
-        nextStyleId,
-        existingCell?.attributesSource,
-        existingCell ? index.xml.slice(existingCell.start, existingCell.end) : undefined,
-      ),
+      nextStyleId,
+      currentCell.attributesSource,
+      currentCell.cellXml,
     );
+
+    if (this.workbook.isBatching()) {
+      this.stagePendingCellMutation(normalizedAddress, {
+        attributesSource: extractCellAttributesSource(nextCellXml),
+        kind: "set",
+        snapshot: buildStyledCellSnapshot(currentCell.snapshot, nextStyleId),
+        xml: nextCellXml,
+      });
+      return;
+    }
+
+    this.writeCellXml(normalizedAddress, nextCellXml);
   }
 
   /**
@@ -1528,6 +1551,20 @@ export class Sheet {
   deleteCell(rowNumber: number, column: number | string): void;
   deleteCell(addressOrRowNumber: string | number, column?: number | string): void {
     const normalizedAddress = resolveCellAddress(addressOrRowNumber, column);
+    const currentCell = this.getCurrentCellWriteState(normalizedAddress);
+
+    if (!currentCell.snapshot.exists) {
+      return;
+    }
+
+    if (this.workbook.isBatching()) {
+      this.stagePendingCellMutation(normalizedAddress, {
+        kind: "delete",
+        snapshot: createMissingCellSnapshot(),
+      });
+      return;
+    }
+
     const index = this.getSheetIndex();
     const existingCell = getLocatedCell(index, normalizedAddress);
 
@@ -1560,23 +1597,36 @@ export class Sheet {
     formulaOrOptions?: string | SetFormulaOptions,
     options: SetFormulaOptions = {},
   ): void {
-    const normalizedAddress = resolveCellAddress(addressOrRowNumber, typeof addressOrRowNumber === "number" ? columnOrFormula as number | string : undefined);
-    const existingCell = getLocatedCell(this.getSheetIndex(), normalizedAddress);
+    const normalizedAddress = resolveCellAddress(
+      addressOrRowNumber,
+      typeof addressOrRowNumber === "number" ? columnOrFormula as number | string : undefined,
+    );
+    const currentCell = this.getCurrentCellWriteState(normalizedAddress);
     const { formula, formulaOptions } = resolveSetFormulaArguments(
       addressOrRowNumber,
       columnOrFormula,
       formulaOrOptions,
       options,
     );
-    this.writeCellXml(
+    const cachedValue = formulaOptions.cachedValue ?? null;
+    const nextCellXml = buildFormulaCellXml(
       normalizedAddress,
-      buildFormulaCellXml(
-        normalizedAddress,
-        formula,
-        formulaOptions.cachedValue ?? null,
-        existingCell?.attributesSource,
-      ),
+      formula,
+      cachedValue,
+      currentCell.attributesSource,
     );
+
+    if (this.workbook.isBatching()) {
+      this.stagePendingCellMutation(normalizedAddress, {
+        attributesSource: extractCellAttributesSource(nextCellXml),
+        kind: "set",
+        snapshot: buildFormulaCellSnapshot(formula, cachedValue, currentCell.snapshot.styleId),
+        xml: nextCellXml,
+      });
+      return;
+    }
+
+    this.writeCellXml(normalizedAddress, nextCellXml);
   }
 
   /**
@@ -1844,7 +1894,15 @@ export class Sheet {
    * Reads the full parsed cell snapshot for an address.
    */
   readCellSnapshot(address: string): CellSnapshot {
-    const locatedCell = getLocatedCell(this.getSheetIndex(), normalizeCellAddress(address));
+    const normalizedAddress = normalizeCellAddress(address);
+    if (this.hasPendingCellMutations) {
+      const pendingCell = this.pendingCellMutations.get(normalizedAddress);
+      if (pendingCell) {
+        return pendingCell.snapshot;
+      }
+    }
+
+    const locatedCell = getLocatedCell(this.getSheetIndex(false), normalizedAddress);
     return parseCellSnapshot(locatedCell);
   }
 
@@ -1858,7 +1916,14 @@ export class Sheet {
     }
 
     const columnNumber = normalizeColumnNumber(column);
-    const row = this.getSheetIndex().rows.get(rowNumber);
+    if (this.hasPendingCellMutations) {
+      const pendingCell = this.pendingCellMutations.get(makeCellAddress(rowNumber, columnNumber));
+      if (pendingCell) {
+        return pendingCell.snapshot;
+      }
+    }
+
+    const row = this.getSheetIndex(false).rows.get(rowNumber);
     return parseCellSnapshot(row?.cellsByColumn[columnNumber]);
   }
 
@@ -1909,13 +1974,74 @@ export class Sheet {
     }
   }
 
-  private getSheetIndex(): SheetIndex {
+  private getSheetIndex(flushPendingMutations = true): SheetIndex {
+    if (flushPendingMutations && this.hasPendingCellMutations) {
+      this.flushPendingCellMutations();
+    }
+
     if (this.sheetIndex) {
       return this.sheetIndex;
     }
 
     this.sheetIndex = buildSheetIndex(this.workbook, this.workbook.readEntryText(this.path));
     return this.sheetIndex;
+  }
+
+  private getCurrentCellWriteState(address: string): CurrentCellWriteState {
+    if (this.hasPendingCellMutations) {
+      const pendingCell = this.pendingCellMutations.get(address);
+      if (pendingCell) {
+        return pendingCell.kind === "delete"
+          ? { snapshot: pendingCell.snapshot }
+          : {
+              attributesSource: pendingCell.attributesSource,
+              cellXml: pendingCell.xml,
+              snapshot: pendingCell.snapshot,
+            };
+      }
+    }
+
+    const index = this.getSheetIndex(false);
+    const locatedCell = getLocatedCell(index, address);
+    if (!locatedCell) {
+      return { snapshot: createMissingCellSnapshot() };
+    }
+
+    return {
+      attributesSource: locatedCell.attributesSource,
+      cellXml: index.xml.slice(locatedCell.start, locatedCell.end),
+      snapshot: locatedCell.snapshot,
+    };
+  }
+
+  private stagePendingCellMutation(
+    address: string,
+    mutation: Omit<PendingCellMutation, "address" | "columnNumber" | "rowNumber">,
+  ): void {
+    const { rowNumber, columnNumber } = splitCellAddress(address);
+    this.pendingCellMutations.set(address, {
+      address,
+      columnNumber,
+      rowNumber,
+      ...mutation,
+    });
+    this.hasPendingCellMutations = true;
+    this.hasPendingBatchWrite = true;
+    this.workbook.markSheetDirty(this);
+    this.revision += 1;
+  }
+
+  private flushPendingCellMutations(): void {
+    if (!this.hasPendingCellMutations) {
+      return;
+    }
+
+    const baseIndex = this.getSheetIndex(false);
+    const nextSheetXml = applyPendingCellMutationsToSheetXml(baseIndex, this.pendingCellMutations.values());
+    this.workbook.writeEntryText(this.path, nextSheetXml);
+    this.sheetIndex = buildSheetIndex(this.workbook, nextSheetXml);
+    this.pendingCellMutations.clear();
+    this.hasPendingCellMutations = false;
   }
 
   private writeCellXml(address: string, cellXml: string): void {
@@ -2057,6 +2183,10 @@ export class Sheet {
   }
 
   finalizeBatchWrite(): void {
+    if (this.hasPendingCellMutations) {
+      this.flushPendingCellMutations();
+    }
+
     if (!this.hasPendingBatchWrite || !this.sheetIndex) {
       return;
     }
@@ -2072,8 +2202,237 @@ export class Sheet {
   }
 }
 
+interface PendingCellMutation {
+  address: string;
+  attributesSource?: string;
+  columnNumber: number;
+  kind: "delete" | "set";
+  rowNumber: number;
+  snapshot: CellSnapshot;
+  xml?: string;
+}
+
+interface CurrentCellWriteState {
+  attributesSource?: string;
+  cellXml?: string;
+  snapshot: CellSnapshot;
+}
+
 function isLogicalCellEntry(cell: Pick<CellEntry, "formula" | "value">): boolean {
   return cell.formula !== null || cell.value !== null;
+}
+
+function createMissingCellSnapshot(): CellSnapshot {
+  return {
+    exists: false,
+    error: null,
+    formula: null,
+    rawType: null,
+    styleId: null,
+    type: "missing",
+    value: null,
+  };
+}
+
+function buildValueCellSnapshot(value: CellValue, styleId: number | null): CellSnapshot {
+  return {
+    exists: true,
+    error: null,
+    formula: null,
+    rawType:
+      typeof value === "string"
+        ? "inlineStr"
+        : typeof value === "boolean"
+          ? "b"
+          : null,
+    styleId,
+    type:
+      value === null
+        ? "blank"
+        : typeof value === "string"
+          ? "string"
+          : typeof value === "number"
+            ? "number"
+            : "boolean",
+    value,
+  };
+}
+
+function buildStyledCellSnapshot(cell: CellSnapshot, styleId: number | null): CellSnapshot {
+  if (!cell.exists) {
+    return {
+      exists: true,
+      error: null,
+      formula: null,
+      rawType: null,
+      styleId,
+      type: "blank",
+      value: null,
+    };
+  }
+
+  return {
+    ...cell,
+    exists: true,
+    styleId,
+    type: cell.type === "missing" ? "blank" : cell.type,
+  };
+}
+
+function buildFormulaCellSnapshot(
+  formula: string,
+  cachedValue: CellValue,
+  styleId: number | null,
+): CellSnapshot {
+  return {
+    exists: true,
+    error: null,
+    formula,
+    rawType:
+      typeof cachedValue === "string"
+        ? "str"
+        : typeof cachedValue === "boolean"
+          ? "b"
+          : null,
+    styleId,
+    type: "formula",
+    value: cachedValue,
+  };
+}
+
+function extractCellAttributesSource(cellXml: string): string {
+  const openTagEnd = cellXml.indexOf(">");
+  if (openTagEnd === -1) {
+    throw new XlsxError("Cell XML is missing opening tag");
+  }
+
+  let source = cellXml.slice(2, openTagEnd);
+  let end = source.length;
+  while (end > 0 && /\s/.test(source[end - 1]!)) {
+    end -= 1;
+  }
+
+  if (end > 0 && source[end - 1] === "/") {
+    end -= 1;
+    while (end > 0 && /\s/.test(source[end - 1]!)) {
+      end -= 1;
+    }
+  }
+
+  let start = 0;
+  while (start < end && /\s/.test(source[start]!)) {
+    start += 1;
+  }
+
+  source = source.slice(start, end);
+  return source;
+}
+
+function applyPendingCellMutationsToSheetXml(
+  baseIndex: SheetIndex,
+  pendingMutations: Iterable<PendingCellMutation>,
+): string {
+  const mutationsByRow = new Map<number, PendingCellMutation[]>();
+
+  for (const mutation of pendingMutations) {
+    const rowMutations = mutationsByRow.get(mutation.rowNumber);
+    if (rowMutations) {
+      rowMutations.push(mutation);
+    } else {
+      mutationsByRow.set(mutation.rowNumber, [mutation]);
+    }
+  }
+
+  let nextSheetXml = baseIndex.xml;
+  const rowNumbers = [...mutationsByRow.keys()].sort((left, right) => right - left);
+
+  for (const rowNumber of rowNumbers) {
+    const rowMutations = mutationsByRow.get(rowNumber);
+    if (!rowMutations) {
+      continue;
+    }
+
+    const row = baseIndex.rows.get(rowNumber);
+    if (!row) {
+      const nextRowXml = buildRowXmlFromPendingMutations(rowNumber, `r="${rowNumber}"`, rowMutations);
+      if (!nextRowXml) {
+        continue;
+      }
+
+      const insertionIndex = findRowInsertionIndex(baseIndex, rowNumber);
+      nextSheetXml = nextSheetXml.slice(0, insertionIndex) + nextRowXml + nextSheetXml.slice(insertionIndex);
+      continue;
+    }
+
+    const nextRowXml = applyPendingMutationsToRow(baseIndex.xml, row, rowMutations);
+    nextSheetXml = nextSheetXml.slice(0, row.start) + nextRowXml + nextSheetXml.slice(row.end);
+  }
+
+  return nextSheetXml;
+}
+
+function applyPendingMutationsToRow(
+  sheetXml: string,
+  row: LocatedRow,
+  rowMutations: PendingCellMutation[],
+): string {
+  if (row.selfClosing) {
+    return buildRowXmlFromPendingMutations(row.rowNumber, row.attributesSource, rowMutations)
+      ?? sheetXml.slice(row.start, row.end);
+  }
+
+  let nextRowXml = sheetXml.slice(row.start, row.end);
+  const sortedMutations = [...rowMutations].sort((left, right) => right.columnNumber - left.columnNumber);
+
+  for (const mutation of sortedMutations) {
+    const existingCell = row.cellsByColumn[mutation.columnNumber];
+    if (existingCell) {
+      const relativeStart = existingCell.start - row.start;
+      const relativeEnd = existingCell.end - row.start;
+      nextRowXml =
+        mutation.kind === "delete"
+          ? nextRowXml.slice(0, relativeStart) + nextRowXml.slice(relativeEnd)
+          : nextRowXml.slice(0, relativeStart) + mutation.xml! + nextRowXml.slice(relativeEnd);
+      continue;
+    }
+
+    if (mutation.kind === "delete") {
+      continue;
+    }
+
+    const insertionIndex = findPendingCellInsertionIndex(row, mutation.columnNumber) - row.start;
+    nextRowXml = nextRowXml.slice(0, insertionIndex) + mutation.xml! + nextRowXml.slice(insertionIndex);
+  }
+
+  return normalizeEmptyRowXml(nextRowXml);
+}
+
+function buildRowXmlFromPendingMutations(
+  rowNumber: number,
+  rowAttributesSource: string,
+  rowMutations: PendingCellMutation[],
+): string | null {
+  const nextCells = [...rowMutations]
+    .filter((mutation) => mutation.kind === "set")
+    .sort((left, right) => left.columnNumber - right.columnNumber)
+    .map((mutation) => mutation.xml!);
+
+  if (nextCells.length === 0) {
+    return null;
+  }
+
+  const attributesSource = rowAttributesSource.length > 0 ? rowAttributesSource : `r="${rowNumber}"`;
+  return `<row ${attributesSource}>${nextCells.join("")}</row>`;
+}
+
+function findPendingCellInsertionIndex(row: Pick<LocatedRow, "cells" | "innerEnd">, columnNumber: number): number {
+  for (const cell of row.cells) {
+    if (cell.columnNumber > columnNumber) {
+      return cell.start;
+    }
+  }
+
+  return row.innerEnd;
 }
 
 function formatCellDisplayValue(cell: Pick<CellSnapshot, "error" | "value">): string | null {

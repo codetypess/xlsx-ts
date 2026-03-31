@@ -954,6 +954,7 @@ export class Workbook {
    * Exports the workbook as detached archive entries.
    */
   toEntries(): ArchiveEntry[] {
+    this.flushBatchedSheets();
     return this.entryOrder.map((path) => {
       const data = this.entries.get(path);
       if (!data) {
@@ -965,6 +966,7 @@ export class Workbook {
   }
 
   private *getEntriesView(): Iterable<ArchiveEntry> {
+    this.flushBatchedSheets();
     for (const path of this.entryOrder) {
       const data = this.entries.get(path);
       if (!data) {
@@ -972,6 +974,12 @@ export class Workbook {
       }
 
       yield { path, data };
+    }
+  }
+
+  private flushBatchedSheets(): void {
+    for (const sheet of this.batchedSheets) {
+      sheet.finalizeBatchWrite();
     }
   }
 

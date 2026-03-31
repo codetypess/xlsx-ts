@@ -137,6 +137,30 @@ test("sheet.batch groups multiple edits and flushes the final used range", async
   assert.match(entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml"), /<dimension ref="A1:C3"\/>/);
 });
 
+test("sheet.batch stages cell XML lazily until a full-sheet read needs a flush", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const workbook = Workbook.fromEntries(await loadFixtureEntries(fixtureDir));
+  const sheet = workbook.getSheet("Sheet1");
+  const readSheetXml = () => (workbook as any).readEntryText("xl/worksheets/sheet1.xml") as string;
+
+  sheet.batch((currentSheet) => {
+    currentSheet.setCell("C3", 99);
+
+    assert.equal(currentSheet.getCell("C3"), 99);
+    assert.doesNotMatch(readSheetXml(), /r="C3"/);
+
+    assert.equal(currentSheet.getRangeRef(), "A1:C3");
+    assert.match(readSheetXml(), /<c r="C3"><v>99<\/v><\/c>/);
+
+    currentSheet.setFormula("B2", "SUM(C3,1)", { cachedValue: 100 });
+    assert.equal(currentSheet.getFormula("B2"), "SUM(C3,1)");
+    assert.doesNotMatch(readSheetXml(), /SUM\(C3,1\)/);
+  });
+
+  const finalXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(finalXml, /<c r="B2"><f>SUM\(C3,1\)<\/f><v>100<\/v><\/c>/);
+});
+
 test("workbook.batch can group edits across multiple sheets", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const workbook = Workbook.fromEntries(

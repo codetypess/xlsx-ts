@@ -473,11 +473,13 @@ await workbook.save("output.xlsx");
 - `npm run bench:monster`
   - 对 `res/monster.xlsx` 运行 3 轮基准
 - `npm run bench:check`
-  - 对 `res/monster.xlsx` 运行 5 轮基准，并校验 `benchmarks/monster-baseline.json` 里的非空单元格数量和耗时阈值
+  - 对 `res/monster.xlsx` 运行 5 轮基准，并校验 `benchmarks/monster-baseline.json` 里的非空单元格数量，以及配置好的读写耗时阈值
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5`
-  - 自定义文件路径和迭代次数；输出 JSON 会同时包含致密遍历结果 `result`、稀疏遍历结果 `sparseResult`，以及每个 sheet 的放大量统计
+  - 自定义文件路径和迭代次数；输出 JSON 会同时包含致密遍历结果 `result`、稀疏遍历结果 `sparseResult`、批量写入结果 `writeResult`，以及每个 sheet 的放大量统计
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5 --check benchmarks/monster-baseline.json`
-  - 对任意基准文件执行回归检查；数量或耗时超出阈值时进程会以非零状态退出
+  - 对任意基准文件执行回归检查；数量或配置的读写耗时超出阈值时进程会以非零状态退出
+
+批量写入基准会故意挑选“物理单元格节点最多”的 worksheet，并在一次 `sheet.batch(...)` 里覆盖最多 30 个现有的 `A` 列单元格。这样更容易盯住大表里重复内存写入的热点路径。
 
 ## 当前限制
 

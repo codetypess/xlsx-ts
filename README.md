@@ -478,11 +478,13 @@ Common commands:
 - `npm run bench:monster`
   - Run a 3-iteration benchmark on `res/monster.xlsx`
 - `npm run bench:check`
-  - Run a 5-iteration benchmark on `res/monster.xlsx` and validate the non-null count plus time threshold from `benchmarks/monster-baseline.json`
+  - Run a 5-iteration benchmark on `res/monster.xlsx` and validate the non-null count plus the configured read/write thresholds from `benchmarks/monster-baseline.json`
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5`
-  - Run the benchmark with a custom file path and iteration count; the JSON output includes both dense traversal (`result`) and sparse traversal (`sparseResult`) plus per-sheet amplification stats
+  - Run the benchmark with a custom file path and iteration count; the JSON output includes dense traversal (`result`), sparse traversal (`sparseResult`), a batch write scenario (`writeResult`), and per-sheet amplification stats
 - `node --import tsx scripts/benchmark.ts res/monster.xlsx 5 --check benchmarks/monster-baseline.json`
-  - Run the regression check against any benchmark file; the process exits non-zero when the workbook count or timing threshold is exceeded
+  - Run the regression check against any benchmark file; the process exits non-zero when the workbook count or configured read/write timing thresholds are exceeded
+
+The batch write benchmark intentionally targets the worksheet with the most physical cell nodes and overwrites up to 30 existing `A` column cells inside one `sheet.batch(...)` call. That keeps the regression check focused on the hot path for repeated in-memory cell edits on large sheets.
 
 ## Current Limits
 

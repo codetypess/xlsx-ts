@@ -1,4 +1,7 @@
 {
   "expectedNonNull": 581708,
-  "maxAverageMs": 900
+  "maxAverageMs": 900,
+  "expectedBatchWriteSheet": "td_troop",
+  "expectedBatchWriteWrites": 30,
+  "maxBatchWriteAverageMs": 1500
 }
