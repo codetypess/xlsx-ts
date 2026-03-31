@@ -1149,6 +1149,134 @@ test("validate returns a successful roundtrip result for the fixture workbook", 
   }
 });
 
+test("set rejects conflicting output modes", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeFixtureWorkbook(tempRoot);
+    const outputPath = join(tempRoot, "conflict.xlsx");
+    const result = await runCliCapture([
+      "set",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--cell",
+      "A1",
+      "--text",
+      "World",
+      "--output",
+      outputPath,
+      "--in-place",
+    ]);
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Use either --output or --in-place, not both/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("set rejects invalid JSON values", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeFixtureWorkbook(tempRoot);
+    const outputPath = join(tempRoot, "invalid-json.xlsx");
+    const result = await runCliCapture([
+      "set",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--cell",
+      "A1",
+      "--value",
+      "{",
+      "--output",
+      outputPath,
+    ]);
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Invalid JSON in --value/);
+    await assert.rejects(stat(outputPath));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("apply requires an output path unless --in-place is used", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeFixtureWorkbook(tempRoot);
+    const opsPath = join(tempRoot, "ops.json");
+    await writeFile(opsPath, "[]");
+
+    const result = await runCliCapture(["apply", inputPath, "--ops", opsPath]);
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /An output path is required; pass --output or use --in-place/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("apply rejects invalid JSON ops documents", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeFixtureWorkbook(tempRoot);
+    const opsPath = join(tempRoot, "ops.json");
+    const outputPath = join(tempRoot, "output.xlsx");
+    await writeFile(opsPath, "{");
+
+    const result = await runCliCapture([
+      "apply",
+      inputPath,
+      "--ops",
+      opsPath,
+      "--output",
+      outputPath,
+    ]);
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Invalid JSON in .*ops\.json/);
+    await assert.rejects(stat(outputPath));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("apply rejects unsupported operation types", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeFixtureWorkbook(tempRoot);
+    const opsPath = join(tempRoot, "ops.json");
+    const outputPath = join(tempRoot, "output.xlsx");
+    await writeFile(opsPath, JSON.stringify([{ type: "explodeSheet", sheet: "Sheet1" }]));
+
+    const result = await runCliCapture([
+      "apply",
+      inputPath,
+      "--ops",
+      opsPath,
+      "--output",
+      outputPath,
+    ]);
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Unsupported operation type/);
+    await assert.rejects(stat(outputPath));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 async function runCliCapture(argv: string[]): Promise<{
   exitCode: number;
   stderr: string;
