@@ -291,6 +291,7 @@ export async function resolveTableCommandContext(
     }
   }
 
+  // Explicit CLI flags always win; profiles only backfill omitted sheet/row metadata.
   const sheet = options.sheet ?? profile?.sheet;
   const headerRow = options.headerRow ?? profile?.headerRow;
   const dataStartRow = options.dataStartRow ?? profile?.dataStartRow;
@@ -480,6 +481,8 @@ export function writeStructuredTableRecord(
       continue;
     }
 
+    // Missing keys clear the target cell on purpose; otherwise older values from the
+    // existing row would survive and make a partial record write look like a merge.
     const nextValue = Object.hasOwn(record, header) ? record[header] ?? null : null;
     sheet.setCell(rowNumber, columnIndex + 1, nextValue);
   }
@@ -499,6 +502,8 @@ export function writeStructuredTableRecords(
 
   const keepRows = new Set(records.map((_, index) => dataStartRow + index));
   const rowsToDelete = existingRows.filter((row) => !keepRows.has(row));
+  // Delete from the bottom so row numbers for the yet-to-delete tail do not shift
+  // underneath us as records are removed from the worksheet.
   rowsToDelete.sort((left, right) => right - left);
 
   for (const row of rowsToDelete) {
@@ -559,6 +564,8 @@ function inferTableHeaderRow(sheet: CliSheet): number {
   let bestRow = 0;
   let bestScore = Number.NEGATIVE_INFINITY;
 
+  // Limit inference to the top of the sheet where config-table style headers live in practice;
+  // scanning the whole workbook would add noise from data rows and be slower on large sheets.
   for (let row = 1; row <= maxRow; row += 1) {
     const score = scoreHeaderRowCandidate(sheet, row);
     if (score > bestScore) {
@@ -582,6 +589,8 @@ function inferTableDataStartRow(sheet: CliSheet, headerRow: number): number {
     }
 
     const firstValue = values[0];
+    // Structured sheets often place marker or type rows between the header and real data.
+    // Skip those rows so the first returned row is a true record row.
     if (typeof firstValue === "string" && (isMetadataMarker(firstValue) || looksLikeTypeDescriptor(firstValue))) {
       continue;
     }
@@ -629,6 +638,8 @@ function inferTableKeyFields(headers: string[]): string[] {
   const trimmedHeaders = headers.map((header) => header.trim()).filter((header) => header.length > 0);
   const compositeKeys: string[] = [];
 
+  // Prefer contiguous key1/key2/... headers over single-field fallbacks so generated
+  // profiles preserve the workbook's intended composite key shape.
   for (let index = 1; ; index += 1) {
     const name = `key${index}`;
     if (!trimmedHeaders.includes(name)) {

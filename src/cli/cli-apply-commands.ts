@@ -167,6 +167,8 @@ export function registerApplyCommands(
         const inputPath = resolveFrom(io.cwd, file);
         const opsPath = resolveFrom(io.cwd, options.ops);
         const document = await readOpsDocument(opsPath);
+        // Keep CLI precedence explicit: `--output` wins over any embedded document output,
+        // and both override the default "must choose output or in-place" guard.
         const configuredOutput = document.output ? resolveFrom(io.cwd, document.output) : undefined;
         const outputPath = resolveOutputPath(inputPath, {
           inPlace: options.inPlace === true,
@@ -174,6 +176,8 @@ export function registerApplyCommands(
         });
         const workbook = await Workbook.open(inputPath);
 
+        // Apply actions in source order so ops documents can express dependent steps,
+        // such as creating or renaming a sheet before later cell edits target it.
         for (const action of document.actions) {
           applyWorkbookOperation(workbook, action);
         }
@@ -193,6 +197,8 @@ export function registerApplyCommands(
 async function readOpsDocument(filePath: string): Promise<OpsDocument> {
   const parsed = parseJsonDocument(await readFile(filePath, "utf8"), filePath);
 
+  // Support a compact array form for simple batches and an object form when callers
+  // also need to embed output metadata alongside the action list.
   if (Array.isArray(parsed)) {
     return {
       actions: parsed.map((item, index) => parseWorkbookOperation(item, `${filePath}[${index}]`)),
@@ -399,6 +405,8 @@ function applyWorkbookOperation(workbook: Workbook, action: WorkbookOperation): 
       workbook.getSheet(action.sheet).setRecord(action.row, action.record, action.headerRow ?? 1);
       return;
     case "setRecords":
+      // `setRecords` is intentionally destructive for the addressed record region:
+      // it rewrites the table snapshot rather than merging field-by-field.
       workbook.getSheet(action.sheet).setRecords(action.records, action.headerRow ?? 1);
       return;
     case "setActiveSheet":
