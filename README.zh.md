@@ -127,6 +127,8 @@ workbook.batch((currentWorkbook) => {
 });
 ```
 
+对于空白 sheet，`addRecord()`、`addRecords()`、`setRecord()`、`setRecords()` 会自动根据 record key 初始化表头行。
+
 ## 设计思路
 
 库分成两层：

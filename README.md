@@ -131,6 +131,8 @@ workbook.batch((currentWorkbook) => {
 });
 ```
 
+On blank sheets, `addRecord()`, `addRecords()`, `setRecord()`, and `setRecords()` initialize the header row from record keys automatically.
+
 ## Design
 
 The library is split into two layers:

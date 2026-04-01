@@ -3138,6 +3138,36 @@ test("record APIs map rows by header cells", async () => {
   assert.match(sheetXml, /<row r="5"><c r="A5" t="inlineStr"><is><t>Cara<\/t><\/is><\/c><c r="B5"><v>91<\/v><\/c><\/row>/);
 });
 
+test("record APIs initialize headers on a blank created sheet", async () => {
+  const workbook = Workbook.create("Config");
+  const sheet = workbook.getSheet("Config");
+
+  sheet.addRecord({ Name: "Alice", Score: 98 });
+
+  assert.deepEqual(sheet.getHeaders(), ["Name", "Score"]);
+  assert.deepEqual(sheet.getRecords(), [{ Name: "Alice", Score: 98 }]);
+
+  const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<row r="1"><c r="A1" t="inlineStr"><is><t>Name<\/t><\/is><\/c><c r="B1" t="inlineStr"><is><t>Score<\/t><\/is><\/c><\/row>/);
+  assert.match(sheetXml, /<row r="2"><c r="A2" t="inlineStr"><is><t>Alice<\/t><\/is><\/c><c r="B2"><v>98<\/v><\/c><\/row>/);
+});
+
+test("record APIs can infer headers from multiple records on a blank sheet", async () => {
+  const workbook = Workbook.create("Config");
+  const sheet = workbook.getSheet("Config");
+
+  sheet.setRecords([
+    { Name: "Alice", Score: 98 },
+    { Name: "Bob", City: "Shanghai" },
+  ]);
+
+  assert.deepEqual(sheet.getHeaders(), ["Name", "Score", "City"]);
+  assert.deepEqual(sheet.getRecords(), [
+    { Name: "Alice", Score: 98, City: null },
+    { Name: "Bob", Score: null, City: "Shanghai" },
+  ]);
+});
+
 test("record APIs can append multiple records in order", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const entries = await loadFixtureEntries(fixtureDir);

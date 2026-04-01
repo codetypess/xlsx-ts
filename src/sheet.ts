@@ -1783,11 +1783,11 @@ export class Sheet {
    * Appends one header-mapped record after the current used range.
    */
   addRecord(record: Record<string, CellValue>, headerRowNumber = 1): void {
-    const headerMap = this.getHeaderMap(headerRowNumber);
     if (Object.keys(record).length === 0) {
       return;
     }
 
+    const headerMap = this.resolveRecordHeaderMap(headerRowNumber, [record], true);
     const nextRowNumber = Math.max(headerRowNumber + 1, (this.getSheetIndex().rowNumbers.at(-1) ?? headerRowNumber) + 1);
     this.writeRecordRow(nextRowNumber, record, headerMap, false);
   }
@@ -1800,7 +1800,7 @@ export class Sheet {
       return;
     }
 
-    const headerMap = this.getHeaderMap(headerRowNumber);
+    const headerMap = this.resolveRecordHeaderMap(headerRowNumber, records, true);
     let nextRowNumber = Math.max(headerRowNumber + 1, (this.getSheetIndex().rowNumbers.at(-1) ?? headerRowNumber) + 1);
 
     for (const record of records) {
@@ -1822,11 +1822,11 @@ export class Sheet {
   setRecord(rowNumber: number, record: Record<string, CellValue>, headerRowNumber = 1): void {
     assertRowNumber(rowNumber);
 
-    const headerMap = this.getHeaderMap(headerRowNumber);
     if (Object.keys(record).length === 0) {
       return;
     }
 
+    const headerMap = this.resolveRecordHeaderMap(headerRowNumber, [record], rowNumber > headerRowNumber);
     this.writeRecordRow(rowNumber, record, headerMap, false);
   }
 
@@ -1836,7 +1836,7 @@ export class Sheet {
    * `headerRowNumber` is 1-based.
    */
   setRecords(records: Array<Record<string, CellValue>>, headerRowNumber = 1): void {
-    const headerMap = this.getHeaderMap(headerRowNumber);
+    const headerMap = this.resolveRecordHeaderMap(headerRowNumber, records, true);
     const existingRecordRows = this.getSheetIndex().rowNumbers.filter(
       (rowNumber) => rowNumber > headerRowNumber && this.getRecord(rowNumber, headerRowNumber) !== null,
     );
@@ -1930,6 +1930,25 @@ export class Sheet {
   private getHeaderMap(headerRowNumber: number): Map<string, number> {
     assertRowNumber(headerRowNumber);
     return buildHeaderMap(this.getRow(headerRowNumber));
+  }
+
+  private resolveRecordHeaderMap(
+    headerRowNumber: number,
+    records: Array<Record<string, CellValue>>,
+    allowHeaderInitialization: boolean,
+  ): Map<string, number> {
+    const headerMap = this.getHeaderMap(headerRowNumber);
+    if (headerMap.size > 0 || !allowHeaderInitialization || !isEmptyHeaderRow(this.getRow(headerRowNumber))) {
+      return headerMap;
+    }
+
+    const inferredHeaders = collectRecordHeaders(records);
+    if (inferredHeaders.length === 0) {
+      return headerMap;
+    }
+
+    this.setHeaders(inferredHeaders, headerRowNumber);
+    return this.getHeaderMap(headerRowNumber);
   }
 
   private writeRecordRow(
@@ -2277,6 +2296,28 @@ function buildStyledCellSnapshot(cell: CellSnapshot, styleId: number | null): Ce
     styleId,
     type: cell.type === "missing" ? "blank" : cell.type,
   };
+}
+
+function collectRecordHeaders(records: Array<Record<string, CellValue>>): string[] {
+  const headers: string[] = [];
+  const seen = new Set<string>();
+
+  for (const record of records) {
+    for (const key of Object.keys(record)) {
+      if (key.length === 0 || seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      headers.push(key);
+    }
+  }
+
+  return headers;
+}
+
+function isEmptyHeaderRow(values: CellValue[]): boolean {
+  return values.length === 0 || values.every((value) => value === null || value === "");
 }
 
 function buildFormulaCellSnapshot(

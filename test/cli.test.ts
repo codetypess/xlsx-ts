@@ -281,6 +281,42 @@ test("record commands manage header-based sheet data through the CLI", async () 
   }
 });
 
+test("add-record initializes headers on a newly created workbook", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const createdPath = join(tempRoot, "created.xlsx");
+    const recordsPath = join(tempRoot, "records.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      createdPath,
+      "--sheet",
+      "Config",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "add-record",
+      createdPath,
+      "--sheet",
+      "Config",
+      "--record",
+      '{"Key":"alpha","Value":"1"}',
+      "--output",
+      recordsPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).records, [{ Key: "alpha", Value: "1" }]);
+
+    const workbook = await Workbook.open(recordsPath);
+    assert.deepEqual(workbook.getSheet("Config").getHeaders(), ["Key", "Value"]);
+    assert.deepEqual(workbook.getSheet("Config").getRecords(), [{ Key: "alpha", Value: "1" }]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("config-table command group supports high-level config workflows", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 
