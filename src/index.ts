@@ -12,6 +12,7 @@ export type {
   CellBorderStyle,
   CellBorderSideDefinition,
   CellBorderSidePatch,
+  SheetComment,
   CellEntry,
   CellFillColor,
   CellFillColorPatch,

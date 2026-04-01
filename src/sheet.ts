@@ -17,6 +17,7 @@ import type {
   DataValidation,
   FreezePane,
   Hyperlink,
+  SheetComment,
   SetDataValidationOptions,
   SetFormulaOptions,
   SetHyperlinkOptions,
@@ -33,6 +34,7 @@ import {
   type SheetIndex,
 } from "./sheet/sheet-index.js";
 import {
+  compareCellAddresses,
   makeCellAddress,
   normalizeCellAddress,
   normalizeColumnNumber,
@@ -90,6 +92,21 @@ import {
   assertRowNumber,
 } from "./sheet/sheet-validation.js";
 import {
+  buildCommentsVmlDrawingXml,
+  buildCommentsXml,
+  COMMENTS_CONTENT_TYPE,
+  COMMENTS_RELATIONSHIP_TYPE,
+  ensureDefaultContentType,
+  ensureLegacyDrawingInSheetXml,
+  findSheetCommentParts,
+  getNextCommentsPath,
+  getNextVmlDrawingPath,
+  parseCommentsXml,
+  removeLegacyDrawingFromSheetXml,
+  VML_CONTENT_TYPE,
+  VML_DRAWING_RELATIONSHIP_TYPE,
+} from "./sheet/sheet-comments.js";
+import {
   buildDataValidationXml,
   parseHyperlinkRelationshipTargets,
   parseSheetAutoFilter,
@@ -115,6 +132,7 @@ import {
   parseSheetTables,
   removeContentTypeOverride,
   removeRelationshipById,
+  upsertRelationship,
   removeTablePartsFromSheetXml,
   TABLE_CONTENT_TYPE,
   TABLE_RELATIONSHIP_TYPE,
@@ -970,6 +988,11 @@ export class Sheet {
    * Replaces the current record set from JSON-ready objects.
    */
   fromJson(records: Array<Record<string, CellValue>>, headerRowNumber = 1): void {
+    const headers = collectRecordHeaders(records);
+    if (headers.length > 0) {
+      this.setHeaders(headers, headerRowNumber);
+    }
+
     this.setRecords(records, headerRowNumber);
   }
 
@@ -1307,6 +1330,26 @@ export class Sheet {
   }
 
   /**
+   * Lists worksheet comments.
+   */
+  getComments(): SheetComment[] {
+    const parts = findSheetCommentParts(this.getSheetIndex().xml, this.path, this.readSheetRelationshipsXml());
+    if (!parts.commentsPath || !this.workbook.listEntries().includes(parts.commentsPath)) {
+      return [];
+    }
+
+    return parseCommentsXml(this.workbook.readEntryText(parts.commentsPath)).comments;
+  }
+
+  /**
+   * Reads one worksheet comment by cell address.
+   */
+  getComment(address: string): SheetComment | null {
+    const normalizedAddress = normalizeCellAddress(address);
+    return this.getComments().find((comment) => comment.address === normalizedAddress) ?? null;
+  }
+
+  /**
    * Lists worksheet hyperlinks.
    */
   getHyperlinks(): Hyperlink[] {
@@ -1348,6 +1391,127 @@ export class Sheet {
 
     if (nextState.relationshipsXml !== currentRelationshipsXml) {
       this.writeSheetRelationshipsXml(nextState.relationshipsXml);
+    }
+  }
+
+  /**
+   * Creates or replaces a worksheet comment.
+   */
+  setComment(address: string, text: string, options: { author?: string } = {}): void {
+    const normalizedAddress = normalizeCellAddress(address);
+    const currentSheetXml = this.getSheetIndex().xml;
+    let nextSheetXml = currentSheetXml;
+    let nextRelationshipsXml = this.readSheetRelationshipsXml();
+    let nextContentTypesXml = this.readContentTypesXml();
+    const entryPaths = this.workbook.listEntries();
+    const parts = findSheetCommentParts(currentSheetXml, this.path, nextRelationshipsXml);
+    const existingComments =
+      parts.commentsPath && entryPaths.includes(parts.commentsPath)
+        ? parseCommentsXml(this.workbook.readEntryText(parts.commentsPath)).comments
+        : [];
+    const previousComment = existingComments.find((comment) => comment.address === normalizedAddress) ?? null;
+    const nextComments = [
+      ...existingComments.filter((comment) => comment.address !== normalizedAddress),
+      {
+        address: normalizedAddress,
+        author: options.author ?? previousComment?.author ?? existingComments[0]?.author ?? "fastxlsx",
+        text,
+      },
+    ].sort((left, right) => compareCellAddresses(left.address, right.address));
+
+    let commentsPath = parts.commentsPath;
+    if (!commentsPath) {
+      commentsPath = getNextCommentsPath(entryPaths);
+      const relationshipId = getNextRelationshipIdFromXml(nextRelationshipsXml);
+      nextRelationshipsXml = appendRelationship(
+        nextRelationshipsXml,
+        relationshipId,
+        COMMENTS_RELATIONSHIP_TYPE,
+        makeRelativeSheetRelationshipTarget(this.path, commentsPath),
+      );
+      nextContentTypesXml = addContentTypeOverride(nextContentTypesXml, commentsPath, COMMENTS_CONTENT_TYPE);
+    }
+
+    let vmlRelationshipId = parts.legacyDrawingRelationshipId;
+    let vmlPath = parts.vmlPath;
+    if (!vmlRelationshipId || !vmlPath) {
+      vmlRelationshipId = parts.legacyDrawingRelationshipId ?? getNextRelationshipIdFromXml(nextRelationshipsXml);
+      vmlPath = parts.vmlPath ?? getNextVmlDrawingPath(entryPaths);
+      nextRelationshipsXml = upsertRelationship(
+        nextRelationshipsXml,
+        vmlRelationshipId,
+        VML_DRAWING_RELATIONSHIP_TYPE,
+        makeRelativeSheetRelationshipTarget(this.path, vmlPath),
+      );
+      nextSheetXml = ensureLegacyDrawingInSheetXml(nextSheetXml, vmlRelationshipId);
+      nextContentTypesXml = ensureDefaultContentType(nextContentTypesXml, "vml", VML_CONTENT_TYPE);
+    }
+
+    this.workbook.writeEntryText(commentsPath, buildCommentsXml(nextComments));
+    this.workbook.writeEntryText(vmlPath, buildCommentsVmlDrawingXml(nextComments));
+    if (nextSheetXml !== currentSheetXml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+    if (nextRelationshipsXml !== this.readSheetRelationshipsXml()) {
+      this.writeSheetRelationshipsXml(nextRelationshipsXml);
+    }
+    if (nextContentTypesXml !== this.readContentTypesXml()) {
+      this.writeContentTypesXml(nextContentTypesXml);
+    }
+  }
+
+  /**
+   * Removes a worksheet comment by cell address.
+   */
+  removeComment(address: string): void {
+    const normalizedAddress = normalizeCellAddress(address);
+    const currentSheetXml = this.getSheetIndex().xml;
+    const currentRelationshipsXml = this.readSheetRelationshipsXml();
+    const parts = findSheetCommentParts(currentSheetXml, this.path, currentRelationshipsXml);
+    if (!parts.commentsPath || !this.workbook.listEntries().includes(parts.commentsPath)) {
+      return;
+    }
+
+    const existingComments = parseCommentsXml(this.workbook.readEntryText(parts.commentsPath)).comments;
+    const nextComments = existingComments.filter((comment) => comment.address !== normalizedAddress);
+    if (nextComments.length === existingComments.length) {
+      return;
+    }
+
+    if (nextComments.length > 0) {
+      this.workbook.writeEntryText(parts.commentsPath, buildCommentsXml(nextComments));
+      if (parts.vmlPath) {
+        this.workbook.writeEntryText(parts.vmlPath, buildCommentsVmlDrawingXml(nextComments));
+      }
+      return;
+    }
+
+    let nextRelationshipsXml = currentRelationshipsXml;
+    let nextSheetXml = currentSheetXml;
+    let nextContentTypesXml = this.readContentTypesXml();
+
+    this.workbook.removeEntry(parts.commentsPath);
+    nextContentTypesXml = removeContentTypeOverride(nextContentTypesXml, parts.commentsPath);
+    if (parts.commentsRelationshipId) {
+      nextRelationshipsXml = removeRelationshipById(nextRelationshipsXml, parts.commentsRelationshipId);
+    }
+
+    if (parts.vmlPath) {
+      this.workbook.removeEntry(parts.vmlPath);
+    }
+    if (parts.vmlRelationshipId) {
+      nextRelationshipsXml = removeRelationshipById(nextRelationshipsXml, parts.vmlRelationshipId);
+    }
+    nextSheetXml = removeLegacyDrawingFromSheetXml(nextSheetXml);
+
+    if (nextSheetXml !== currentSheetXml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+    if (nextRelationshipsXml !== currentRelationshipsXml) {
+      this.writeSheetRelationshipsXml(nextRelationshipsXml);
+    }
+    if (nextContentTypesXml !== this.readContentTypesXml()) {
+      this.writeContentTypesXml(nextContentTypesXml);
     }
   }
 

@@ -313,11 +313,15 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.getSelection()`
 - `sheet.getDataValidations()`
 - `sheet.getTables()`
+- `sheet.getComments()`
+- `sheet.getComment(address)`
 - `sheet.getHyperlinks()`
 - `sheet.getPrintArea()`
 - `sheet.getPrintTitles()`
 - `sheet.addTable(range, options?)`
 - `sheet.removeTable(name)`
+- `sheet.setComment(address, text, options?)`
+- `sheet.removeComment(address)`
 - `sheet.setHyperlink(address, target, options?)`
 - `sheet.removeHyperlink(address)`
 - `sheet.setAutoFilter(range)`

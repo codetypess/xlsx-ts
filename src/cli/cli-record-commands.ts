@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+
 import { Command } from "commander";
 
 import {
@@ -23,6 +25,57 @@ export function registerRecordCommands(
     .action(async (file: string, options: { headerRow: number; sheet: string }) => {
       const result = await getRecords(resolveFrom(io.cwd, file), options.sheet, options.headerRow);
       writeJson(io.stdout, result);
+    });
+
+  program
+    .command("export-json")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--header-row <row>", "header row used for record mapping", parsePositiveInteger, 1)
+    .option("--output <file>", "output json path")
+    .action(async (file: string, options: { headerRow: number; output?: string; sheet: string }) => {
+      const result = await getRecords(resolveFrom(io.cwd, file), options.sheet, options.headerRow);
+
+      if (options.output) {
+        const outputPath = resolveFrom(io.cwd, options.output);
+        await writeFile(outputPath, `${JSON.stringify(result.records, null, 2)}\n`, "utf8");
+        writeJson(io.stdout, {
+          action: "exportJson",
+          input: result.file,
+          output: outputPath,
+          records: result.records.length,
+          sheet: options.sheet,
+        });
+        return;
+      }
+
+      io.stdout(`${JSON.stringify(result.records, null, 2)}\n`);
+    });
+
+  program
+    .command("export-csv")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--header-row <row>", "header row used for record mapping", parsePositiveInteger, 1)
+    .option("--output <file>", "output csv path")
+    .action(async (file: string, options: { headerRow: number; output?: string; sheet: string }) => {
+      const inputPath = resolveFrom(io.cwd, file);
+      const workbook = await Workbook.open(inputPath);
+      const csv = workbook.getSheet(options.sheet).toCsv(options.headerRow);
+
+      if (options.output) {
+        const outputPath = resolveFrom(io.cwd, options.output);
+        await writeFile(outputPath, csv.length > 0 ? `${csv}\n` : "", "utf8");
+        writeJson(io.stdout, {
+          action: "exportCsv",
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+        return;
+      }
+
+      io.stdout(csv.length > 0 ? `${csv}\n` : "");
     });
 
   program
@@ -61,6 +114,87 @@ export function registerRecordCommands(
           headers: sheet.getHeaders(options.headerRow),
           input: inputPath,
           output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  program
+    .command("import-json")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--from-json <file>", "json file containing an array of records")
+    .option("--header-row <row>", "header row used for record mapping", parsePositiveInteger, 1)
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          fromJson: string;
+          headerRow: number;
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const records = parseJsonCellRecordArray(
+          await readFile(resolveFrom(io.cwd, options.fromJson), "utf8"),
+          "--from-json",
+        );
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.fromJson(records, options.headerRow);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "importJson",
+          input: inputPath,
+          output: outputPath,
+          records: sheet.toJson(options.headerRow),
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  program
+    .command("import-csv")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--from-csv <file>", "csv file containing header row and records")
+    .option("--header-row <row>", "header row used for record mapping", parsePositiveInteger, 1)
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          fromCsv: string;
+          headerRow: number;
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const csv = await readFile(resolveFrom(io.cwd, options.fromCsv), "utf8");
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.fromCsv(csv, options.headerRow);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "importCsv",
+          input: inputPath,
+          output: outputPath,
+          records: sheet.toJson(options.headerRow),
           sheet: options.sheet,
         });
       },

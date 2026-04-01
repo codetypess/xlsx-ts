@@ -281,6 +281,86 @@ test("record commands manage header-based sheet data through the CLI", async () 
   }
 });
 
+test("json and csv record commands import and export sheet records", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeFixtureWorkbook(tempRoot);
+    const jsonPath = join(tempRoot, "records.json");
+    const csvPath = join(tempRoot, "records.csv");
+    const fromJsonPath = join(tempRoot, "from-json.xlsx");
+    const fromCsvPath = join(tempRoot, "from-csv.xlsx");
+
+    await writeFile(
+      jsonPath,
+      `${JSON.stringify([{ id: 1001, name: "Alpha" }, { id: 1002, name: "Beta" }], null, 2)}\n`,
+    );
+    await writeFile(csvPath, 'id,name,notes\n1003,Gamma,"A, B"\n1004,Delta,"line 1\nline 2"\n');
+
+    let result = await runCliCapture([
+      "import-json",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--from-json",
+      jsonPath,
+      "--output",
+      fromJsonPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).records, [
+      { id: 1001, name: "Alpha" },
+      { id: 1002, name: "Beta" },
+    ]);
+
+    result = await runCliCapture([
+      "export-json",
+      fromJsonPath,
+      "--sheet",
+      "Sheet1",
+      "--output",
+      jsonPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(
+      JSON.parse(await readFile(jsonPath, "utf8")),
+      [{ id: 1001, name: "Alpha" }, { id: 1002, name: "Beta" }],
+    );
+
+    result = await runCliCapture([
+      "import-csv",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--from-csv",
+      csvPath,
+      "--output",
+      fromCsvPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).records, [
+      { id: 1003, name: "Gamma", notes: "A, B" },
+      { id: 1004, name: "Delta", notes: "line 1\nline 2" },
+    ]);
+
+    result = await runCliCapture([
+      "export-csv",
+      fromCsvPath,
+      "--sheet",
+      "Sheet1",
+      "--output",
+      csvPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(
+      await readFile(csvPath, "utf8"),
+      'id,name,notes\n1003,Gamma,"A, B"\n1004,Delta,"line 1\nline 2"\n',
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("add-record initializes headers on a newly created workbook", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 

@@ -318,6 +318,12 @@ export interface SheetPrintTitles {
   rows: string | null;
 }
 
+export interface SheetComment {
+  address: string;
+  author: string | null;
+  text: string;
+}
+
 export interface DataValidation {
   range: string;
   type: string | null;

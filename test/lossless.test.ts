@@ -4125,6 +4125,71 @@ test("sheet hyperlink APIs read, write, replace, and delete hyperlinks", async (
   assert.deepEqual(sheet.getHyperlinks(), []);
 });
 
+test("sheet comment APIs create, update, read, and delete comments", async () => {
+  const workbook = Workbook.create("Sheet1");
+  const sheet = workbook.getSheet("Sheet1");
+
+  assert.deepEqual(sheet.getComments(), []);
+  assert.equal(sheet.getComment("B2"), null);
+
+  sheet.setComment("B2", "Hello comment", { author: "Alice" });
+
+  assert.deepEqual(sheet.getComment("B2"), {
+    address: "B2",
+    author: "Alice",
+    text: "Hello comment",
+  });
+
+  let entries = workbook.toEntries();
+  let sheetXml = entryText(entries, "xl/worksheets/sheet1.xml");
+  let commentsXml = entryText(entries, "xl/comments1.xml");
+  let relsXml = entryText(entries, "xl/worksheets/_rels/sheet1.xml.rels");
+  let contentTypesXml = entryText(entries, "[Content_Types].xml");
+  let vmlXml = entryText(entries, "xl/drawings/vmlDrawing1.vml");
+
+  assert.match(sheetXml, /<legacyDrawing r:id="rId2"\/>/);
+  assert.match(commentsXml, /<authors><author>Alice<\/author><\/authors>/);
+  assert.match(commentsXml, /<comment ref="B2" authorId="0"><text><t>Hello comment<\/t><\/text><\/comment>/);
+  assert.match(
+    relsXml,
+    /<Relationship Id="rId1" Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/comments" Target="\.\.\/comments1\.xml"\/>/,
+  );
+  assert.match(
+    relsXml,
+    /<Relationship Id="rId2" Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/vmlDrawing" Target="\.\.\/drawings\/vmlDrawing1\.vml"\/>/,
+  );
+  assert.match(contentTypesXml, /<Override PartName="\/xl\/comments1\.xml" ContentType="application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.comments\+xml"\/>/);
+  assert.match(contentTypesXml, /<Default Extension="vml" ContentType="application\/vnd\.openxmlformats-officedocument\.vmlDrawing"\/>/);
+  assert.match(vmlXml, /<x:Row>1<\/x:Row>/);
+  assert.match(vmlXml, /<x:Column>1<\/x:Column>/);
+
+  sheet.setComment("B2", "Updated");
+  sheet.setComment("A1", "First");
+
+  assert.deepEqual(sheet.getComments(), [
+    { address: "A1", author: "Alice", text: "First" },
+    { address: "B2", author: "Alice", text: "Updated" },
+  ]);
+
+  sheet.removeComment("A1");
+  assert.deepEqual(sheet.getComments(), [
+    { address: "B2", author: "Alice", text: "Updated" },
+  ]);
+
+  sheet.removeComment("B2");
+  assert.deepEqual(sheet.getComments(), []);
+  assert.equal(sheet.getComment("B2"), null);
+
+  entries = workbook.toEntries();
+  sheetXml = entryText(entries, "xl/worksheets/sheet1.xml");
+  contentTypesXml = entryText(entries, "[Content_Types].xml");
+
+  assert.doesNotMatch(sheetXml, /<legacyDrawing\b/);
+  assert.doesNotMatch(contentTypesXml, /\/xl\/comments1\.xml/);
+  assert.equal(workbook.listEntries().includes("xl/comments1.xml"), false);
+  assert.equal(workbook.listEntries().includes("xl/drawings/vmlDrawing1.vml"), false);
+});
+
 test("sheet autoFilter APIs read, write, shift, and remove filters", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const entries = replaceEntryText(
