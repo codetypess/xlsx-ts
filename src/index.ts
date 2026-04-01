@@ -45,4 +45,6 @@ export type {
   SetHyperlinkOptions,
   SheetSelection,
   SheetVisibility,
+  WorkbookCreateOptions,
+  WorkbookCreateSheetOptions,
 } from "./types.js";

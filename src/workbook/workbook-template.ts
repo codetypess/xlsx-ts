@@ -4,17 +4,26 @@ import { buildEmptyWorksheetXml } from "./workbook-sheet-package.js";
 
 const XML_ENCODER = new TextEncoder();
 
-export function buildWorkbookTemplateEntries(sheetName: string, createdAt = new Date()): ArchiveEntry[] {
-  const createdAtText = formatW3cDateTime(createdAt);
+export interface WorkbookTemplateOptions {
+  createdAt?: Date;
+  creator?: string;
+  lastModifiedBy?: string;
+  sheetName: string;
+}
+
+export function buildWorkbookTemplateEntries(options: WorkbookTemplateOptions): ArchiveEntry[] {
+  const createdAtText = formatW3cDateTime(options.createdAt ?? new Date());
+  const creator = options.creator ?? "fastxlsx";
+  const lastModifiedBy = options.lastModifiedBy ?? creator;
 
   return [
     encodeXml("_rels/.rels", buildRootRelationshipsXml()),
     encodeXml("[Content_Types].xml", buildContentTypesXml()),
-    encodeXml("docProps/app.xml", buildAppXml(sheetName)),
-    encodeXml("docProps/core.xml", buildCoreXml(createdAtText)),
+    encodeXml("docProps/app.xml", buildAppXml(options.sheetName)),
+    encodeXml("docProps/core.xml", buildCoreXml(createdAtText, creator, lastModifiedBy)),
     encodeXml("xl/_rels/workbook.xml.rels", buildWorkbookRelationshipsXml()),
     encodeXml("xl/styles.xml", buildStylesXml()),
-    encodeXml("xl/workbook.xml", buildWorkbookXml(sheetName)),
+    encodeXml("xl/workbook.xml", buildWorkbookXml(options.sheetName)),
     encodeXml("xl/worksheets/sheet1.xml", buildEmptyWorksheetXml()),
   ];
 }
@@ -57,11 +66,11 @@ function buildAppXml(sheetName: string): string {
 </Properties>`;
 }
 
-function buildCoreXml(createdAt: string): string {
+function buildCoreXml(createdAt: string, creator: string, lastModifiedBy: string): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <dc:creator>fastxlsx</dc:creator>
-  <cp:lastModifiedBy>fastxlsx</cp:lastModifiedBy>
+  <dc:creator>${escapeXmlText(creator)}</dc:creator>
+  <cp:lastModifiedBy>${escapeXmlText(lastModifiedBy)}</cp:lastModifiedBy>
   <dcterms:created xsi:type="dcterms:W3CDTF">${createdAt}</dcterms:created>
   <dcterms:modified xsi:type="dcterms:W3CDTF">${createdAt}</dcterms:modified>
 </cp:coreProperties>`;

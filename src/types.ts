@@ -339,6 +339,21 @@ export interface SetDefinedNameOptions {
   scope?: string;
 }
 
+export interface WorkbookCreateSheetOptions {
+  headers?: string[];
+  name: string;
+  records?: Array<Record<string, CellValue>>;
+  visibility?: SheetVisibility;
+}
+
+export interface WorkbookCreateOptions {
+  activeSheet?: string;
+  author?: string;
+  createdAt?: Date;
+  modifiedBy?: string;
+  sheets?: Array<string | WorkbookCreateSheetOptions>;
+}
+
 export interface SetHyperlinkOptions {
   text?: string;
   tooltip?: string;

@@ -60,12 +60,20 @@ import {
   resolveSetStyleId,
 } from "./sheet/sheet-style-input.js";
 import {
+  buildEmptyRowXml,
   buildEmptyStyledRowXml,
   buildStyledRowXml,
+  buildUpdatedRowXml,
+  parseColumnHidden,
   parseColumnStyleId,
+  parseColumnWidth,
+  parseRowHeight,
+  parseRowHidden,
   parseRowStyleId,
   transformColumnStyleDefinitions,
+  updateColumnHiddenInSheetXml,
   updateColumnStyleIdInSheetXml,
+  updateColumnWidthInSheetXml,
 } from "./sheet/sheet-style-xml.js";
 import {
   EMPTY_RELATIONSHIPS_XML,
@@ -409,6 +417,24 @@ export class Sheet {
   }
 
   /**
+   * Reads whether a column is hidden.
+   *
+   * Numeric column indexes are 1-based.
+   */
+  getColumnHidden(column: number | string): boolean {
+    return parseColumnHidden(this.getSheetIndex().xml, normalizeColumnNumber(column));
+  }
+
+  /**
+   * Reads the explicit column width, if one is set.
+   *
+   * Numeric column indexes are 1-based.
+   */
+  getColumnWidth(column: number | string): number | null {
+    return parseColumnWidth(this.getSheetIndex().xml, normalizeColumnNumber(column));
+  }
+
+  /**
    * Copies the style id from one cell to another without changing the value.
    *
    * Numeric row and column arguments are 1-based.
@@ -725,6 +751,26 @@ export class Sheet {
   }
 
   /**
+   * Reads whether a row is hidden.
+   *
+   * `rowNumber` is 1-based.
+   */
+  getRowHidden(rowNumber: number): boolean {
+    assertRowNumber(rowNumber);
+    return parseRowHidden(this.getSheetIndex().rows.get(rowNumber)?.attributesSource);
+  }
+
+  /**
+   * Reads the explicit row height, if one is set.
+   *
+   * `rowNumber` is 1-based.
+   */
+  getRowHeight(rowNumber: number): number | null {
+    assertRowNumber(rowNumber);
+    return parseRowHeight(this.getSheetIndex().rows.get(rowNumber)?.attributesSource);
+  }
+
+  /**
    * Reads a worksheet row as a dense array up to the last used column.
    *
    * `rowNumber` is 1-based.
@@ -904,6 +950,14 @@ export class Sheet {
   }
 
   /**
+   * Reads one record by matching a header field value.
+   */
+  getRecordBy(field: string, value: CellValue, headerRowNumber = 1): Record<string, CellValue> | null {
+    const rowNumber = this.findRecordRow(field, value, headerRowNumber);
+    return rowNumber === null ? null : this.getRecord(rowNumber, headerRowNumber);
+  }
+
+  /**
    * Reads a rectangular cell range using A1 notation.
    */
   getRange(range: string): CellValue[][] {
@@ -921,6 +975,68 @@ export class Sheet {
     }
 
     return values;
+  }
+
+  /**
+   * Applies a style patch to every cell in a range.
+   */
+  setRangeStyle(range: string, patch: CellStylePatch): void {
+    this.batch((currentSheet) => {
+      forEachCellInRange(range, (address) => {
+        currentSheet.setStyle(address, patch);
+      });
+    });
+  }
+
+  /**
+   * Applies a number format to every cell in a range.
+   */
+  setRangeNumberFormat(range: string, formatCode: string): void {
+    this.batch((currentSheet) => {
+      forEachCellInRange(range, (address) => {
+        currentSheet.setNumberFormat(address, formatCode);
+      });
+    });
+  }
+
+  /**
+   * Applies a solid background color to every cell in a range.
+   */
+  setRangeBackgroundColor(range: string, color: string | null): void {
+    this.batch((currentSheet) => {
+      forEachCellInRange(range, (address) => {
+        currentSheet.setBackgroundColor(address, color);
+      });
+    });
+  }
+
+  /**
+   * Copies styles from one rectangular range to another range of the same size.
+   */
+  copyRangeStyle(sourceRange: string, targetRange: string): void {
+    const source = parseRangeRef(sourceRange);
+    const target = parseRangeRef(targetRange);
+    const sourceHeight = source.endRow - source.startRow;
+    const sourceWidth = source.endColumn - source.startColumn;
+    const targetHeight = target.endRow - target.startRow;
+    const targetWidth = target.endColumn - target.startColumn;
+
+    if (sourceHeight !== targetHeight || sourceWidth !== targetWidth) {
+      throw new XlsxError("Source and target ranges must have the same shape");
+    }
+
+    this.batch((currentSheet) => {
+      for (let rowOffset = 0; rowOffset <= sourceHeight; rowOffset += 1) {
+        for (let columnOffset = 0; columnOffset <= sourceWidth; columnOffset += 1) {
+          currentSheet.copyStyle(
+            source.startRow + rowOffset,
+            source.startColumn + columnOffset,
+            target.startRow + rowOffset,
+            target.startColumn + columnOffset,
+          );
+        }
+      }
+    });
   }
 
   /**
@@ -1527,6 +1643,38 @@ export class Sheet {
   }
 
   /**
+   * Sets whether a column is hidden.
+   *
+   * Numeric column indexes are 1-based.
+   */
+  setColumnHidden(column: number | string, hidden: boolean): void {
+    const columnNumber = normalizeColumnNumber(column);
+    const currentSheetXml = this.getSheetIndex().xml;
+    const nextSheetXml = updateColumnHiddenInSheetXml(currentSheetXml, columnNumber, hidden);
+
+    if (nextSheetXml !== currentSheetXml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
+   * Sets or clears an explicit column width.
+   *
+   * Numeric column indexes are 1-based.
+   */
+  setColumnWidth(column: number | string, width: number | null): void {
+    const columnNumber = normalizeColumnNumber(column);
+    assertOptionalWorksheetSize(width, "column width");
+
+    const currentSheetXml = this.getSheetIndex().xml;
+    const nextSheetXml = updateColumnWidthInSheetXml(currentSheetXml, columnNumber, width);
+
+    if (nextSheetXml !== currentSheetXml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
    * Clones and applies a column style.
    */
   setColumnStyle(column: number | string, patch: CellStylePatch): number {
@@ -1678,6 +1826,63 @@ export class Sheet {
         buildStyledRowXml(index.xml, row, styleId) +
         index.xml.slice(row.end),
     );
+  }
+
+  /**
+   * Sets whether a row is hidden.
+   *
+   * `rowNumber` is 1-based.
+   */
+  setRowHidden(rowNumber: number, hidden: boolean): void {
+    assertRowNumber(rowNumber);
+
+    const index = this.getSheetIndex();
+    const row = index.rows.get(rowNumber);
+    if (!row) {
+      if (!hidden) {
+        return;
+      }
+
+      const nextRowXml = buildEmptyRowXml(rowNumber, { hidden: true });
+      if (!nextRowXml) {
+        return;
+      }
+
+      const insertionIndex = findRowInsertionIndex(index, rowNumber);
+      this.writeSheetXml(index.xml.slice(0, insertionIndex) + nextRowXml + index.xml.slice(insertionIndex));
+      return;
+    }
+
+    this.writeSheetXml(index.xml.slice(0, row.start) + buildUpdatedRowXml(index.xml, row, { hidden }) + index.xml.slice(row.end));
+  }
+
+  /**
+   * Sets or clears an explicit row height.
+   *
+   * `rowNumber` is 1-based.
+   */
+  setRowHeight(rowNumber: number, height: number | null): void {
+    assertRowNumber(rowNumber);
+    assertOptionalWorksheetSize(height, "row height");
+
+    const index = this.getSheetIndex();
+    const row = index.rows.get(rowNumber);
+    if (!row) {
+      if (height === null) {
+        return;
+      }
+
+      const nextRowXml = buildEmptyRowXml(rowNumber, { height });
+      if (!nextRowXml) {
+        return;
+      }
+
+      const insertionIndex = findRowInsertionIndex(index, rowNumber);
+      this.writeSheetXml(index.xml.slice(0, insertionIndex) + nextRowXml + index.xml.slice(insertionIndex));
+      return;
+    }
+
+    this.writeSheetXml(index.xml.slice(0, row.start) + buildUpdatedRowXml(index.xml, row, { height }) + index.xml.slice(row.end));
   }
 
   /**
@@ -1853,6 +2058,30 @@ export class Sheet {
   }
 
   /**
+   * Creates or updates a record matched by one header field.
+   *
+   * Returns the 1-based row number that was written.
+   */
+  upsertRecord(field: string, record: Record<string, CellValue>, headerRowNumber = 1): number {
+    if (!Object.hasOwn(record, field)) {
+      throw new XlsxError(`Record is missing match field: ${field}`);
+    }
+
+    const rowNumber = this.findRecordRow(field, record[field] ?? null, headerRowNumber);
+    if (rowNumber === null) {
+      const nextRowNumber = Math.max(
+        headerRowNumber + 1,
+        (this.getSheetIndex().rowNumbers.at(-1) ?? headerRowNumber) + 1,
+      );
+      this.addRecord(record, headerRowNumber);
+      return nextRowNumber;
+    }
+
+    this.setRecord(rowNumber, record, headerRowNumber);
+    return rowNumber;
+  }
+
+  /**
    * Deletes a single record row.
    *
    * `rowNumber` and `headerRowNumber` are 1-based.
@@ -1888,6 +2117,19 @@ export class Sheet {
     for (const rowNumber of uniqueRows) {
       this.deleteRecord(rowNumber, headerRowNumber);
     }
+  }
+
+  /**
+   * Deletes the first record matched by one header field.
+   */
+  deleteRecordBy(field: string, value: CellValue, headerRowNumber = 1): boolean {
+    const rowNumber = this.findRecordRow(field, value, headerRowNumber);
+    if (rowNumber === null) {
+      return false;
+    }
+
+    this.deleteRecord(rowNumber, headerRowNumber);
+    return true;
   }
 
   /**
@@ -1949,6 +2191,20 @@ export class Sheet {
 
     this.setHeaders(inferredHeaders, headerRowNumber);
     return this.getHeaderMap(headerRowNumber);
+  }
+
+  private findRecordRow(field: string, value: CellValue, headerRowNumber: number): number | null {
+    assertRowNumber(headerRowNumber);
+
+    const maxRow = this.getSheetIndex().rowNumbers.at(-1) ?? headerRowNumber;
+    for (let rowNumber = headerRowNumber + 1; rowNumber <= maxRow; rowNumber += 1) {
+      const record = this.getRecord(rowNumber, headerRowNumber);
+      if (record && Object.hasOwn(record, field) && record[field] === value) {
+        return rowNumber;
+      }
+    }
+
+    return null;
   }
 
   private writeRecordRow(
@@ -2318,6 +2574,26 @@ function collectRecordHeaders(records: Array<Record<string, CellValue>>): string
 
 function isEmptyHeaderRow(values: CellValue[]): boolean {
   return values.length === 0 || values.every((value) => value === null || value === "");
+}
+
+function forEachCellInRange(range: string, visit: (address: string) => void): void {
+  const { startRow, endRow, startColumn, endColumn } = parseRangeRef(range);
+
+  for (let rowNumber = startRow; rowNumber <= endRow; rowNumber += 1) {
+    for (let columnNumber = startColumn; columnNumber <= endColumn; columnNumber += 1) {
+      visit(makeCellAddress(rowNumber, columnNumber));
+    }
+  }
+}
+
+function assertOptionalWorksheetSize(value: number | null, label: string): void {
+  if (value === null) {
+    return;
+  }
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new XlsxError(`Invalid ${label}: ${value}`);
+  }
 }
 
 function buildFormulaCellSnapshot(

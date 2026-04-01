@@ -22,6 +22,8 @@ import type {
   DefinedName,
   SetDefinedNameOptions,
   SheetVisibility,
+  WorkbookCreateOptions,
+  WorkbookCreateSheetOptions,
 } from "./types.js";
 import { XlsxError } from "./errors.js";
 import {
@@ -247,9 +249,60 @@ export class Workbook {
   /**
    * Creates a new workbook from a minimal built-in template.
    */
-  static create(sheetName = "Sheet1"): Workbook {
-    assertSheetName(sheetName);
-    return new Workbook(buildWorkbookTemplateEntries(sheetName));
+  static create(sheetName?: string): Workbook;
+  static create(options: WorkbookCreateOptions): Workbook;
+  static create(sheetNameOrOptions: string | WorkbookCreateOptions = "Sheet1"): Workbook {
+    if (typeof sheetNameOrOptions === "string") {
+      assertSheetName(sheetNameOrOptions);
+      return new Workbook(buildWorkbookTemplateEntries({ sheetName: sheetNameOrOptions }));
+    }
+
+    const options = sheetNameOrOptions;
+    const normalizedSheets = normalizeWorkbookCreateSheets(options.sheets);
+    if (normalizedSheets.length === 0) {
+      throw new XlsxError("Workbook.create requires at least one sheet");
+    }
+
+    if (normalizedSheets.every((sheet) => sheet.visibility !== "visible")) {
+      throw new XlsxError("Workbook.create requires at least one visible sheet");
+    }
+
+    const creator = options.author ?? "fastxlsx";
+    const workbook = new Workbook(
+      buildWorkbookTemplateEntries({
+        createdAt: options.createdAt,
+        creator,
+        lastModifiedBy: options.modifiedBy ?? creator,
+        sheetName: normalizedSheets[0]!.name,
+      }),
+    );
+
+    workbook.batch((currentWorkbook) => {
+      for (let index = 1; index < normalizedSheets.length; index += 1) {
+        currentWorkbook.addSheet(normalizedSheets[index]!.name);
+      }
+
+      for (const sheetConfig of normalizedSheets) {
+        const sheet = currentWorkbook.getSheet(sheetConfig.name);
+        if (sheetConfig.headers && sheetConfig.headers.length > 0) {
+          sheet.setHeaders(sheetConfig.headers);
+        }
+        if (sheetConfig.records && sheetConfig.records.length > 0) {
+          sheet.addRecords(sheetConfig.records);
+        }
+      }
+
+      for (const sheetConfig of normalizedSheets) {
+        if (sheetConfig.visibility !== "visible") {
+          currentWorkbook.setSheetVisibility(sheetConfig.name, sheetConfig.visibility);
+        }
+      }
+
+      const activeSheetName = options.activeSheet ?? normalizedSheets.find((sheet) => sheet.visibility === "visible")!.name;
+      currentWorkbook.setActiveSheet(activeSheetName);
+    });
+
+    return workbook;
   }
 
   /**
@@ -1179,4 +1232,39 @@ export class Workbook {
   markSheetDirty(sheet: Sheet): void {
     this.batchedSheets.add(sheet);
   }
+}
+
+function normalizeWorkbookCreateSheets(
+  sheets: Array<string | WorkbookCreateSheetOptions> | undefined,
+): Array<WorkbookCreateSheetOptions & { visibility: SheetVisibility }> {
+  const normalizedInput = sheets && sheets.length > 0 ? sheets : ["Sheet1"];
+
+  return normalizedInput.map((sheet, index) => {
+    const normalizedSheet =
+      typeof sheet === "string"
+        ? { name: sheet }
+        : {
+            headers: sheet.headers ? [...sheet.headers] : undefined,
+            name: sheet.name,
+            records: sheet.records ? sheet.records.map((record) => ({ ...record })) : undefined,
+            visibility: sheet.visibility,
+          };
+
+    assertSheetName(normalizedSheet.name);
+    const visibility = normalizedSheet.visibility ?? "visible";
+    assertSheetVisibility(visibility);
+
+    if (index > 0 && normalizedInput.some((candidate, candidateIndex) => candidateIndex < index && resolveCreateSheetName(candidate) === normalizedSheet.name)) {
+      throw new XlsxError(`Sheet already exists: ${normalizedSheet.name}`);
+    }
+
+    return {
+      ...normalizedSheet,
+      visibility,
+    };
+  });
+}
+
+function resolveCreateSheetName(sheet: string | WorkbookCreateSheetOptions): string {
+  return typeof sheet === "string" ? sheet : sheet.name;
 }

@@ -65,6 +65,19 @@ workbook.getSheet("Sheet1").setCell("A1", "Hello");
 await workbook.save("new.xlsx");
 ```
 
+Create multiple sheets with initial records:
+
+```ts
+const workbook = Workbook.create({
+  activeSheet: "Data",
+  author: "fastxlsx",
+  sheets: [
+    { name: "Config", headers: ["Key", "Value"] },
+    { name: "Data", records: [{ id: 1001, name: "Alpha" }] },
+  ],
+});
+```
+
 Create from scratch, then edit an existing workbook:
 
 ```ts
@@ -170,6 +183,7 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 
 - `Workbook.open(path)`
 - `Workbook.create(sheetName?)`
+- `Workbook.create(options)`
 - `Workbook.fromEntries(entries)`
 - `Workbook.fromUint8Array(data)`
 - `Workbook.fromArrayBuffer(data)`
@@ -233,8 +247,12 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.getStyle(rowNumber, column)`
 - `sheet.getRowStyleId(rowNumber)`
 - `sheet.getRowStyle(rowNumber)`
+- `sheet.getRowHidden(rowNumber)`
+- `sheet.getRowHeight(rowNumber)`
 - `sheet.getColumnStyleId(column)`
 - `sheet.getColumnStyle(column)`
+- `sheet.getColumnHidden(column)`
+- `sheet.getColumnWidth(column)`
 - `sheet.copyStyle(sourceAddress, targetAddress)`
 - `sheet.copyStyle(sourceRowNumber, sourceColumn, targetRowNumber, targetColumn)`
 - `sheet.setAlignment(address, patch)`
@@ -265,6 +283,7 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.columnCount`
 - `sheet.getHeaders(headerRowNumber?)`
 - `sheet.getRecord(rowNumber, headerRowNumber?)`
+- `sheet.getRecordBy(field, value, headerRowNumber?)`
 - `sheet.getRecords(headerRowNumber?)`
 - `sheet.getColumn(column)`
 - `sheet.getColumnEntries(column)`
@@ -299,6 +318,10 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.setStyleId(rowNumber, column, styleId)`
 - `sheet.setRowStyleId(rowNumber, styleId)`
 - `sheet.setColumnStyleId(column, styleId)`
+- `sheet.setRowHidden(rowNumber, hidden)`
+- `sheet.setRowHeight(rowNumber, height)`
+- `sheet.setColumnHidden(column, hidden)`
+- `sheet.setColumnWidth(column, width)`
 - `sheet.copyStyle(sourceAddress, targetAddress)`
 - `sheet.copyStyle(sourceRowNumber, sourceColumn, targetRowNumber, targetColumn)`
 - `sheet.deleteCell(address)`
@@ -310,8 +333,10 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.setHeaders(headers, headerRowNumber?, startColumn?)`
 - `sheet.setRecord(rowNumber, record, headerRowNumber?)`
 - `sheet.setRecords(records, headerRowNumber?)`
+- `sheet.upsertRecord(field, record, headerRowNumber?)`
 - `sheet.deleteRecord(rowNumber, headerRowNumber?)`
 - `sheet.deleteRecords(rowNumbers, headerRowNumber?)`
+- `sheet.deleteRecordBy(field, value, headerRowNumber?)`
 - `sheet.addRecord(record, headerRowNumber?)`
 - `sheet.addRecords(records, headerRowNumber?)`
 - `sheet.appendRow(values, startColumn?)`
@@ -319,6 +344,10 @@ That makes it much easier to satisfy a strict "roundtrip without diffs" requirem
 - `sheet.setColumn(column, values, startRow?)`
 - `sheet.setRow(rowNumber, values, startColumn?)`
 - `sheet.setRange(startAddress, values)`
+- `sheet.setRangeStyle(range, patch)`
+- `sheet.setRangeNumberFormat(range, formatCode)`
+- `sheet.setRangeBackgroundColor(range, color)`
+- `sheet.copyRangeStyle(sourceRange, targetRange)`
 - `sheet.addMergedRange(range)`
 - `sheet.removeMergedRange(range)`
 - `sheet.getFormula(address)`

@@ -9,6 +9,18 @@ interface ColumnDefinition {
   attributes: Array<[string, string]>;
 }
 
+interface ColumnDefinitionPatch {
+  hidden?: boolean | null;
+  styleId?: number | null;
+  width?: number | null;
+}
+
+interface RowDefinitionPatch {
+  height?: number | null;
+  hidden?: boolean | null;
+  styleId?: number | null;
+}
+
 const COLS_FOLLOWING_TAGS = [
   "sheetData",
   "autoFilter",
@@ -63,10 +75,52 @@ export function parseColumnStyleId(sheetXml: string, columnNumber: number): numb
   return styleId;
 }
 
+export function parseColumnHidden(sheetXml: string, columnNumber: number): boolean {
+  let hidden = false;
+
+  for (const definition of parseColumnDefinitions(sheetXml)) {
+    if (columnNumber < definition.min || columnNumber > definition.max) {
+      continue;
+    }
+
+    hidden = parseBooleanAttribute(definition.attributes, "hidden") ?? false;
+  }
+
+  return hidden;
+}
+
+export function parseColumnWidth(sheetXml: string, columnNumber: number): number | null {
+  let width: number | null = null;
+
+  for (const definition of parseColumnDefinitions(sheetXml)) {
+    if (columnNumber < definition.min || columnNumber > definition.max) {
+      continue;
+    }
+
+    width = parseNumericAttribute(definition.attributes, "width");
+  }
+
+  return width;
+}
+
+export function parseRowHidden(attributesSource: string | undefined): boolean {
+  if (!attributesSource) {
+    return false;
+  }
+
+  return parseBooleanAttribute(parseAttributes(attributesSource), "hidden") ?? false;
+}
+
+export function parseRowHeight(attributesSource: string | undefined): number | null {
+  if (!attributesSource) {
+    return null;
+  }
+
+  return parseNumericAttribute(parseAttributes(attributesSource), "ht");
+}
+
 export function buildStyledRowXml(sheetXml: string, row: LocatedRow, styleId: number | null): string {
-  const serializedAttributes = serializeAttributes(
-    buildRowAttributesWithStyle(row.rowNumber, styleId, row.attributesSource),
-  );
+  const serializedAttributes = serializeAttributes(buildRowAttributes(row.rowNumber, row.attributesSource, { styleId }));
 
   if (row.selfClosing) {
     return `<row ${serializedAttributes}/>`;
@@ -76,7 +130,26 @@ export function buildStyledRowXml(sheetXml: string, row: LocatedRow, styleId: nu
 }
 
 export function buildEmptyStyledRowXml(rowNumber: number, styleId: number): string {
-  return `<row ${serializeAttributes(buildRowAttributesWithStyle(rowNumber, styleId))}/>`;
+  return `<row ${serializeAttributes(buildRowAttributes(rowNumber, "", { styleId }))}/>`;
+}
+
+export function buildUpdatedRowXml(sheetXml: string, row: LocatedRow, patch: RowDefinitionPatch): string {
+  const serializedAttributes = serializeAttributes(buildRowAttributes(row.rowNumber, row.attributesSource, patch));
+
+  if (row.selfClosing) {
+    return `<row ${serializedAttributes}/>`;
+  }
+
+  return `<row ${serializedAttributes}>${sheetXml.slice(row.innerStart, row.innerEnd)}</row>`;
+}
+
+export function buildEmptyRowXml(rowNumber: number, patch: RowDefinitionPatch): string | null {
+  const attributes = buildRowAttributes(rowNumber, "", patch);
+  if (attributes.length === 1) {
+    return null;
+  }
+
+  return `<row ${serializeAttributes(attributes)}/>`;
 }
 
 export function updateColumnStyleIdInSheetXml(
@@ -84,40 +157,23 @@ export function updateColumnStyleIdInSheetXml(
   columnNumber: number,
   styleId: number | null,
 ): string {
-  const existingDefinitions = parseColumnDefinitions(sheetXml);
-  if (existingDefinitions.length === 0 && styleId === null) {
-    return sheetXml;
-  }
+  return updateColumnDefinitionInSheetXml(sheetXml, columnNumber, { styleId });
+}
 
-  const nextDefinitions: ColumnDefinition[] = [];
-  let handled = false;
+export function updateColumnHiddenInSheetXml(
+  sheetXml: string,
+  columnNumber: number,
+  hidden: boolean,
+): string {
+  return updateColumnDefinitionInSheetXml(sheetXml, columnNumber, { hidden });
+}
 
-  for (const definition of existingDefinitions) {
-    if (columnNumber < definition.min || columnNumber > definition.max) {
-      nextDefinitions.push(definition);
-      continue;
-    }
-
-    handled = true;
-    if (definition.min < columnNumber) {
-      nextDefinitions.push(buildColumnDefinition(definition.min, columnNumber - 1, definition.attributes));
-    }
-
-    const styledDefinition = buildColumnDefinitionWithStyle(columnNumber, columnNumber, definition.attributes, styleId);
-    if (styledDefinition) {
-      nextDefinitions.push(styledDefinition);
-    }
-
-    if (columnNumber < definition.max) {
-      nextDefinitions.push(buildColumnDefinition(columnNumber + 1, definition.max, definition.attributes));
-    }
-  }
-
-  if (!handled && styleId !== null) {
-    nextDefinitions.push(buildColumnDefinitionWithStyle(columnNumber, columnNumber, [], styleId)!);
-  }
-
-  return replaceColumnDefinitions(sheetXml, normalizeColumnDefinitions(nextDefinitions));
+export function updateColumnWidthInSheetXml(
+  sheetXml: string,
+  columnNumber: number,
+  width: number | null,
+): string {
+  return updateColumnDefinitionInSheetXml(sheetXml, columnNumber, { width });
 }
 
 export function transformColumnStyleDefinitions(
@@ -173,19 +229,38 @@ export function transformColumnStyleDefinitions(
   return replaceColumnDefinitions(sheetXml, normalizeColumnDefinitions(nextDefinitions));
 }
 
-function buildRowAttributesWithStyle(
+function buildRowAttributes(
   rowNumber: number,
-  styleId: number | null,
   existingAttributesSource = "",
+  patch: RowDefinitionPatch = {},
 ): Array<[string, string]> {
   const attributes = parseAttributes(existingAttributesSource);
   const preserved = attributes.filter(
-    ([name]) => name !== "r" && name !== "s" && name !== "customFormat",
+    ([name]) =>
+      name !== "r" &&
+      name !== "s" &&
+      name !== "customFormat" &&
+      name !== "hidden" &&
+      name !== "ht" &&
+      name !== "customHeight",
   );
   const nextAttributes: Array<[string, string]> = [["r", String(rowNumber)]];
 
-  if (styleId !== null) {
-    nextAttributes.push(["s", String(styleId)], ["customFormat", "1"]);
+  if (patch.styleId !== undefined ? patch.styleId !== null : parseNumericAttribute(attributes, "s") !== null) {
+    const styleId = patch.styleId ?? parseNumericAttribute(attributes, "s");
+    if (styleId !== null) {
+      nextAttributes.push(["s", String(styleId)], ["customFormat", "1"]);
+    }
+  }
+
+  const hidden = patch.hidden ?? parseBooleanAttribute(attributes, "hidden") ?? false;
+  if (hidden) {
+    nextAttributes.push(["hidden", "1"]);
+  }
+
+  const height = patch.height !== undefined ? patch.height : parseNumericAttribute(attributes, "ht");
+  if (height !== null) {
+    nextAttributes.push(["ht", String(height)], ["customHeight", "1"]);
   }
 
   nextAttributes.push(...preserved);
@@ -282,27 +357,85 @@ function buildColumnDefinition(
   };
 }
 
-function buildColumnDefinitionWithStyle(
+function buildColumnDefinitionWithPatch(
   min: number,
   max: number,
   existingAttributes: Array<[string, string]>,
-  styleId: number | null,
+  patch: ColumnDefinitionPatch,
 ): ColumnDefinition | null {
   const preserved = existingAttributes.filter(
-    ([name]) => name !== "min" && name !== "max" && name !== "style",
+    ([name]) =>
+      name !== "min" &&
+      name !== "max" &&
+      name !== "style" &&
+      name !== "hidden" &&
+      name !== "width" &&
+      name !== "customWidth",
   );
-
-  if (styleId === null && preserved.length === 0) {
-    return null;
-  }
-
   const attributes: Array<[string, string]> = [["min", String(min)], ["max", String(max)]];
+
+  const styleId = patch.styleId !== undefined ? patch.styleId : parseNumericAttribute(existingAttributes, "style");
   if (styleId !== null) {
     attributes.push(["style", String(styleId)]);
   }
+
+  const hidden = patch.hidden !== undefined ? patch.hidden : parseBooleanAttribute(existingAttributes, "hidden");
+  if (hidden) {
+    attributes.push(["hidden", "1"]);
+  }
+
+  const width = patch.width !== undefined ? patch.width : parseNumericAttribute(existingAttributes, "width");
+  if (width !== null) {
+    attributes.push(["width", String(width)], ["customWidth", "1"]);
+  }
+
   attributes.push(...preserved);
 
+  if (attributes.length === 2) {
+    return null;
+  }
+
   return { min, max, attributes };
+}
+
+function updateColumnDefinitionInSheetXml(
+  sheetXml: string,
+  columnNumber: number,
+  patch: ColumnDefinitionPatch,
+): string {
+  const existingDefinitions = parseColumnDefinitions(sheetXml);
+  const nextDefinitions: ColumnDefinition[] = [];
+  let handled = false;
+
+  for (const definition of existingDefinitions) {
+    if (columnNumber < definition.min || columnNumber > definition.max) {
+      nextDefinitions.push(definition);
+      continue;
+    }
+
+    handled = true;
+    if (definition.min < columnNumber) {
+      nextDefinitions.push(buildColumnDefinition(definition.min, columnNumber - 1, definition.attributes));
+    }
+
+    const nextDefinition = buildColumnDefinitionWithPatch(columnNumber, columnNumber, definition.attributes, patch);
+    if (nextDefinition) {
+      nextDefinitions.push(nextDefinition);
+    }
+
+    if (columnNumber < definition.max) {
+      nextDefinitions.push(buildColumnDefinition(columnNumber + 1, definition.max, definition.attributes));
+    }
+  }
+
+  if (!handled) {
+    const nextDefinition = buildColumnDefinitionWithPatch(columnNumber, columnNumber, [], patch);
+    if (nextDefinition) {
+      nextDefinitions.push(nextDefinition);
+    }
+  }
+
+  return replaceColumnDefinitions(sheetXml, normalizeColumnDefinitions(nextDefinitions));
 }
 
 function serializeColumnDefinition(definition: ColumnDefinition): string {
@@ -327,4 +460,23 @@ function haveEquivalentColumnDefinitionAttributes(
     serializeAttributes(attributes.filter(([name]) => name !== "min" && name !== "max"));
 
   return normalize(left) === normalize(right);
+}
+
+function parseBooleanAttribute(attributes: Array<[string, string]>, name: string): boolean | null {
+  const value = attributes.find(([attributeName]) => attributeName === name)?.[1];
+  if (value === undefined) {
+    return null;
+  }
+
+  return value === "1" || value.toLowerCase() === "true";
+}
+
+function parseNumericAttribute(attributes: Array<[string, string]>, name: string): number | null {
+  const value = attributes.find(([attributeName]) => attributeName === name)?.[1];
+  if (value === undefined) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }

@@ -83,6 +83,38 @@ test("workbook can create a new workbook from a built-in template", async () => 
   );
 });
 
+test("workbook can create a configured workbook from options", async () => {
+  const workbook = Workbook.create({
+    activeSheet: "Data",
+    author: "Alice",
+    modifiedBy: "Bob",
+    sheets: [
+      { name: "Config", headers: ["Key", "Value"] },
+      {
+        name: "Data",
+        records: [
+          { id: 1001, name: "Alpha" },
+          { id: 1002, name: "Beta" },
+        ],
+      },
+      { name: "Hidden", visibility: "hidden" },
+    ],
+  });
+
+  assert.deepEqual(workbook.getSheetNames(), ["Config", "Data", "Hidden"]);
+  assert.equal(workbook.getActiveSheet().name, "Data");
+  assert.equal(workbook.getSheetVisibility("Hidden"), "hidden");
+  assert.deepEqual(workbook.getSheet("Config").getHeaders(), ["Key", "Value"]);
+  assert.deepEqual(workbook.getSheet("Data").getRecords(), [
+    { id: 1001, name: "Alpha" },
+    { id: 1002, name: "Beta" },
+  ]);
+
+  const coreXml = entryText(workbook.toEntries(), "docProps/core.xml");
+  assert.match(coreXml, /<dc:creator>Alice<\/dc:creator>/);
+  assert.match(coreXml, /<cp:lastModifiedBy>Bob<\/cp:lastModifiedBy>/);
+});
+
 test("workbook supports ArrayBuffer open flows", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const zipped = Workbook.fromEntries(await loadFixtureEntries(fixtureDir)).toUint8Array();
@@ -2066,6 +2098,47 @@ test("row style id APIs read and write row-level style indexes", async () => {
   assert.match(sheetXml, /<row r="3" s="7" customFormat="1">\s*<c r="A3"><v>3<\/v><\/c>\s*<\/row>/);
 });
 
+test("row layout APIs read and write hidden and height attributes", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1" hidden="1" ht="25" customHeight="1">
+      <c r="A1" t="inlineStr"><is><t>Hello</t></is></c>
+    </row>
+    <row r="3">
+      <c r="A3"><v>3</v></c>
+    </row>
+  </sheetData>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  assert.equal(sheet.getRowHidden(1), true);
+  assert.equal(sheet.getRowHeight(1), 25);
+  assert.equal(sheet.getRowHidden(2), false);
+  assert.equal(sheet.getRowHeight(2), null);
+
+  sheet.setRowHidden(1, false);
+  sheet.setRowHeight(1, null);
+  sheet.setRowHidden(2, true);
+  sheet.setRowHeight(3, 30);
+
+  assert.equal(sheet.getRowHidden(1), false);
+  assert.equal(sheet.getRowHeight(1), null);
+  assert.equal(sheet.getRowHidden(2), true);
+  assert.equal(sheet.getRowHeight(3), 30);
+
+  const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<row r="1">\s*<c r="A1" t="inlineStr"><is><t>Hello<\/t><\/is><\/c>\s*<\/row>/);
+  assert.match(sheetXml, /<row r="2" hidden="1"\/>/);
+  assert.match(sheetXml, /<row r="3" ht="30" customHeight="1">\s*<c r="A3"><v>3<\/v><\/c>\s*<\/row>/);
+});
+
 test("row and column style definition APIs read and clone style definitions", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const entries = await loadFixtureEntries(fixtureDir);
@@ -2280,6 +2353,46 @@ test("column style id APIs read, write, and shift with column edits", async () =
   assert.match(sheetXml, /<cols><col min="1" max="1" style="1"\/><col min="3" max="3" style="7"\/><col min="4" max="4" hidden="1"\/><\/cols>/);
 });
 
+test("column layout APIs read and write hidden and width attributes", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cols>
+    <col min="1" max="1" width="18.5" customWidth="1"/>
+    <col min="3" max="3" hidden="1"/>
+  </cols>
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>Hello</t></is></c>
+    </row>
+  </sheetData>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  assert.equal(sheet.getColumnWidth("A"), 18.5);
+  assert.equal(sheet.getColumnWidth("B"), null);
+  assert.equal(sheet.getColumnHidden("C"), true);
+  assert.equal(sheet.getColumnHidden("D"), false);
+
+  sheet.setColumnWidth("A", null);
+  sheet.setColumnWidth("B", 24);
+  sheet.setColumnHidden("C", false);
+  sheet.setColumnHidden("D", true);
+
+  assert.equal(sheet.getColumnWidth("A"), null);
+  assert.equal(sheet.getColumnWidth("B"), 24);
+  assert.equal(sheet.getColumnHidden("C"), false);
+  assert.equal(sheet.getColumnHidden("D"), true);
+
+  const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<cols><col min="2" max="2" width="24" customWidth="1"\/><col min="4" max="4" hidden="1"\/><\/cols>/);
+});
+
 test("range APIs read and write rectangular values", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const entries = await loadFixtureEntries(fixtureDir);
@@ -2304,6 +2417,28 @@ test("range APIs read and write rectangular values", async () => {
   const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<row r="2"><c r="B2"><v>1<\/v><\/c><c r="C2"><v>2<\/v><\/c><\/row>/);
   assert.match(sheetXml, /<row r="3"><c r="B3"><v>3<\/v><\/c><c r="C3"><v>4<\/v><\/c><\/row>/);
+});
+
+test("range style APIs apply and copy styles across rectangles", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = await loadFixtureEntries(fixtureDir);
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.setRangeStyle("A1:B2", {
+    applyAlignment: true,
+    alignment: { horizontal: "center" },
+  });
+  sheet.setRangeNumberFormat("A1:B2", "0.00%");
+  sheet.setRangeBackgroundColor("A1:B2", "FFFF0000");
+  sheet.copyRangeStyle("A1:B2", "C3:D4");
+
+  assert.equal(sheet.getBackgroundColor("B2"), "FFFF0000");
+  assert.equal(sheet.getBackgroundColor("D4"), "FFFF0000");
+  assert.equal(sheet.getNumberFormat("B2")?.code, "0.00%");
+  assert.equal(sheet.getNumberFormat("D4")?.code, "0.00%");
+  assert.deepEqual(sheet.getAlignment("B2"), { horizontal: "center" });
+  assert.deepEqual(sheet.getAlignment("D4"), { horizontal: "center" });
 });
 
 test("sheet rowCount and columnCount track the used bounds", async () => {
@@ -3236,6 +3371,39 @@ test("record APIs can replace the full record set", async () => {
   assert.match(sheetXml, /<row r="2"><c r="A2" t="inlineStr"><is><t>Zoe<\/t><\/is><\/c><c r="B2"><v>100<\/v><\/c><\/row>/);
   assert.match(sheetXml, /<row r="3"><c r="A3" t="inlineStr"><is><t>Yan<\/t><\/is><\/c><c r="B3"\/><\/row>/);
   assert.doesNotMatch(sheetXml, /<row r="4">/);
+});
+
+test("record key APIs can get, upsert, and delete by field", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = await loadFixtureEntries(fixtureDir);
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.setRow(1, ["id", "name"]);
+  sheet.addRecords([
+    { id: 1001, name: "Alpha" },
+    { id: 1002, name: "Beta" },
+  ]);
+
+  assert.deepEqual(sheet.getRecordBy("id", 1002), { id: 1002, name: "Beta" });
+
+  const updatedRow = sheet.upsertRecord("id", { id: 1002, name: "Beta-2" });
+  const insertedRow = sheet.upsertRecord("id", { id: 1003, name: "Gamma" });
+
+  assert.equal(updatedRow, 3);
+  assert.equal(insertedRow, 4);
+  assert.deepEqual(sheet.getRecords(), [
+    { id: 1001, name: "Alpha" },
+    { id: 1002, name: "Beta-2" },
+    { id: 1003, name: "Gamma" },
+  ]);
+
+  assert.equal(sheet.deleteRecordBy("id", 1001), true);
+  assert.equal(sheet.deleteRecordBy("id", 9999), false);
+  assert.deepEqual(sheet.getRecords(), [
+    { id: 1002, name: "Beta-2" },
+    { id: 1003, name: "Gamma" },
+  ]);
 });
 
 test("record APIs can delete a record row", async () => {
