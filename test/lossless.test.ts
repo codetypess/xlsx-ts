@@ -3426,8 +3426,16 @@ test("record key APIs can get, upsert, and delete by field", async () => {
   const updatedRow = sheet.upsertRecord("id", { id: 1002, name: "Beta-2" });
   const insertedRow = sheet.upsertRecord("id", { id: 1003, name: "Gamma" });
 
-  assert.equal(updatedRow, 3);
-  assert.equal(insertedRow, 4);
+  assert.deepEqual(updatedRow, {
+    inserted: false,
+    record: { id: 1002, name: "Beta-2" },
+    row: 3,
+  });
+  assert.deepEqual(insertedRow, {
+    inserted: true,
+    record: { id: 1003, name: "Gamma" },
+    row: 4,
+  });
   assert.deepEqual(sheet.getRecords(), [
     { id: 1001, name: "Alpha" },
     { id: 1002, name: "Beta-2" },
@@ -3480,10 +3488,18 @@ test("sheet record workflow APIs import, export, and sync records", async () => 
   const workbook = Workbook.create("Data");
   const sheet = workbook.getSheet("Data");
 
-  sheet.importRecords([
+  const replaced = sheet.importRecords([
     { id: 1001, name: "Alpha" },
     { id: 1002, name: "Beta" },
   ]);
+  assert.deepEqual(replaced, {
+    headers: ["id", "name"],
+    imported: 2,
+    inserted: 2,
+    mode: "replace",
+    rowCount: 2,
+    updated: 0,
+  });
 
   assert.deepEqual(sheet.exportRecords(), [
     { id: 1001, name: "Alpha" },
@@ -3491,20 +3507,36 @@ test("sheet record workflow APIs import, export, and sync records", async () => 
   ]);
   assert.equal(sheet.exportRecords({ format: "csv" }), "id,name\n1001,Alpha\n1002,Beta");
 
-  sheet.importRecords([{ id: 1003, name: "Gamma" }], { mode: "append" });
+  const appended = sheet.importRecords([{ id: 1003, name: "Gamma" }], { mode: "append" });
+  assert.deepEqual(appended, {
+    headers: ["id", "name"],
+    imported: 1,
+    inserted: 1,
+    mode: "append",
+    rowCount: 3,
+    updated: 0,
+  });
   assert.deepEqual(sheet.getRecords(), [
     { id: 1001, name: "Alpha" },
     { id: 1002, name: "Beta" },
     { id: 1003, name: "Gamma" },
   ]);
 
-  sheet.syncRecords(
+  const synced = sheet.syncRecords(
     [
       { id: 1002, name: "Beta-2" },
       { id: 1004, name: "Delta" },
     ],
     { keyField: "id" },
   );
+  assert.deepEqual(synced, {
+    headers: ["id", "name"],
+    imported: 2,
+    inserted: 1,
+    mode: "upsert",
+    rowCount: 4,
+    updated: 1,
+  });
   assert.deepEqual(sheet.getRecords(), [
     { id: 1001, name: "Alpha" },
     { id: 1002, name: "Beta-2" },
@@ -4233,7 +4265,12 @@ test("sheet comment APIs create, update, read, and delete comments", async () =>
   assert.deepEqual(sheet.getComments(), []);
   assert.equal(sheet.getComment("B2"), null);
 
-  sheet.setComment("B2", "Hello comment", { author: "Alice" });
+  const createdComment = sheet.setComment("B2", "Hello comment", { author: "Alice" });
+  assert.deepEqual(createdComment, {
+    address: "B2",
+    author: "Alice",
+    text: "Hello comment",
+  });
 
   assert.deepEqual(sheet.getComment("B2"), {
     address: "B2",
@@ -4264,8 +4301,18 @@ test("sheet comment APIs create, update, read, and delete comments", async () =>
   assert.match(vmlXml, /<x:Row>1<\/x:Row>/);
   assert.match(vmlXml, /<x:Column>1<\/x:Column>/);
 
-  sheet.setComment("B2", "Updated");
-  sheet.setComment("A1", "First");
+  const updatedComment = sheet.setComment("B2", "Updated");
+  const firstComment = sheet.setComment("A1", "First");
+  assert.deepEqual(updatedComment, {
+    address: "B2",
+    author: "Alice",
+    text: "Updated",
+  });
+  assert.deepEqual(firstComment, {
+    address: "A1",
+    author: "Alice",
+    text: "First",
+  });
 
   assert.deepEqual(sheet.getComments(), [
     { address: "A1", author: "Alice", text: "First" },
@@ -4632,8 +4679,8 @@ test("sheet print area and print titles APIs manage local defined names", async 
   assert.equal(sheet.getPrintArea(), null);
   assert.deepEqual(sheet.getPrintTitles(), { columns: null, rows: null });
 
-  sheet.setPrintArea("A1:C4");
-  sheet.setPrintTitles({ rows: "1:2", columns: "A:B" });
+  assert.equal(sheet.setPrintArea("A1:C4"), "A1:C4");
+  assert.deepEqual(sheet.setPrintTitles({ rows: "1:2", columns: "A:B" }), { columns: "$A:$B", rows: "$1:$2" });
 
   assert.equal(sheet.getPrintArea(), "A1:C4");
   assert.deepEqual(sheet.getPrintTitles(), { columns: "$A:$B", rows: "$1:$2" });
@@ -4643,12 +4690,12 @@ test("sheet print area and print titles APIs manage local defined names", async 
     "Sheet1!$1:$2,Sheet1!$A:$B",
   );
 
-  sheet.setPrintTitles({ rows: null });
+  assert.deepEqual(sheet.setPrintTitles({ rows: null }), { columns: "$A:$B", rows: null });
   assert.deepEqual(sheet.getPrintTitles(), { columns: "$A:$B", rows: null });
   assert.equal(workbook.getDefinedName("_xlnm.Print_Titles", "Sheet1"), "Sheet1!$A:$B");
 
-  sheet.setPrintArea(null);
-  sheet.setPrintTitles({ columns: null });
+  assert.equal(sheet.setPrintArea(null), null);
+  assert.deepEqual(sheet.setPrintTitles({ columns: null }), { columns: null, rows: null });
   assert.equal(sheet.getPrintArea(), null);
   assert.deepEqual(sheet.getPrintTitles(), { columns: null, rows: null });
   assert.equal(workbook.getDefinedName("_xlnm.Print_Area", "Sheet1"), null);

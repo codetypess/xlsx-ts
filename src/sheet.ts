@@ -20,11 +20,14 @@ import type {
   FreezePane,
   Hyperlink,
   SheetComment,
+  SheetCommentWriteOptions,
   SetDataValidationOptions,
   SetFormulaOptions,
   SetHyperlinkOptions,
+  SheetImportRecordsResult,
   SheetSelection,
   SheetPrintTitles,
+  SheetUpsertRecordResult,
 } from "./types.js";
 import { XlsxError } from "./errors.js";
 import {
@@ -1056,18 +1059,33 @@ export class Sheet {
   /**
    * Imports records with a higher-level workflow mode.
    */
-  importRecords(records: Array<Record<string, CellValue>>, options: SheetImportRecordsOptions = {}): void {
+  importRecords(records: Array<Record<string, CellValue>>, options: SheetImportRecordsOptions = {}): SheetImportRecordsResult {
     const headerRow = options.headerRow ?? 1;
     const mode = options.mode ?? "replace";
+    const headers = collectRecordHeaders(records);
 
     if (mode === "replace") {
       this.fromJson(records, headerRow);
-      return;
+      return {
+        headers: headers.length > 0 ? headers : trimTrailingEmptyHeaderNames(this.getHeaders(headerRow)),
+        imported: records.length,
+        inserted: records.length,
+        mode,
+        rowCount: this.getRecords(headerRow).length,
+        updated: 0,
+      };
     }
 
     if (mode === "append") {
       this.addRecords(records, headerRow);
-      return;
+      return {
+        headers: trimTrailingEmptyHeaderNames(this.getHeaders(headerRow)),
+        imported: records.length,
+        inserted: records.length,
+        mode,
+        rowCount: this.getRecords(headerRow).length,
+        updated: 0,
+      };
     }
 
     const keyField = options.keyField;
@@ -1075,18 +1093,34 @@ export class Sheet {
       throw new XlsxError("importRecords with mode=upsert requires keyField");
     }
 
+    let inserted = 0;
+    let updated = 0;
     this.batch((currentSheet) => {
       for (const record of records) {
-        currentSheet.upsertRecord(keyField, record, headerRow);
+        const result = currentSheet.upsertRecord(keyField, record, headerRow);
+        if (result.inserted) {
+          inserted += 1;
+        } else {
+          updated += 1;
+        }
       }
     });
+
+    return {
+      headers: trimTrailingEmptyHeaderNames(this.getHeaders(headerRow)),
+      imported: records.length,
+      inserted,
+      mode,
+      rowCount: this.getRecords(headerRow).length,
+      updated,
+    };
   }
 
   /**
    * Synchronizes records with replace or upsert semantics.
    */
-  syncRecords(records: Array<Record<string, CellValue>>, options: SheetImportRecordsOptions = {}): void {
-    this.importRecords(records, {
+  syncRecords(records: Array<Record<string, CellValue>>, options: SheetImportRecordsOptions = {}): SheetImportRecordsResult {
+    return this.importRecords(records, {
       ...options,
       mode: options.mode ?? (options.keyField ? "upsert" : "replace"),
     });
@@ -1102,13 +1136,15 @@ export class Sheet {
   /**
    * Creates or removes the local print area defined name for this sheet.
    */
-  setPrintArea(range: string | null): void {
+  setPrintArea(range: string | null): string | null {
     if (range === null) {
       this.workbook.deleteDefinedName("_xlnm.Print_Area", this.name);
-      return;
+      return null;
     }
 
-    this.workbook.setDefinedName("_xlnm.Print_Area", normalizeRangeRef(range), { scope: this.name });
+    const normalizedRange = normalizeRangeRef(range);
+    this.workbook.setDefinedName("_xlnm.Print_Area", normalizedRange, { scope: this.name });
+    return normalizedRange;
   }
 
   /**
@@ -1138,24 +1174,29 @@ export class Sheet {
   /**
    * Creates, replaces, or removes the local print titles defined name for this sheet.
    */
-  setPrintTitles(options: { columns?: string | null; rows?: string | null }): void {
+  setPrintTitles(options: { columns?: string | null; rows?: string | null }): SheetPrintTitles {
     const rows = options.rows === undefined ? this.getPrintTitles().rows : options.rows;
     const columns = options.columns === undefined ? this.getPrintTitles().columns : options.columns;
     const references: string[] = [];
+    const result: SheetPrintTitles = {
+      columns: columns === null || columns === undefined ? null : normalizePrintTitleColumnRef(columns),
+      rows: rows === null || rows === undefined ? null : normalizePrintTitleRowRef(rows),
+    };
 
     if (rows !== null && rows !== undefined) {
-      references.push(`${formatSheetNameForReference(this.name)}!${normalizePrintTitleRowRef(rows)}`);
+      references.push(`${formatSheetNameForReference(this.name)}!${result.rows}`);
     }
     if (columns !== null && columns !== undefined) {
-      references.push(`${formatSheetNameForReference(this.name)}!${normalizePrintTitleColumnRef(columns)}`);
+      references.push(`${formatSheetNameForReference(this.name)}!${result.columns}`);
     }
 
     if (references.length === 0) {
       this.workbook.deleteDefinedName("_xlnm.Print_Titles", this.name);
-      return;
+      return { columns: null, rows: null };
     }
 
     this.workbook.setDefinedName("_xlnm.Print_Titles", references.join(","), { scope: this.name });
+    return result;
   }
 
   /**
@@ -1447,7 +1488,7 @@ export class Sheet {
   /**
    * Creates or replaces a worksheet comment.
    */
-  setComment(address: string, text: string, options: { author?: string } = {}): void {
+  setComment(address: string, text: string, options: SheetCommentWriteOptions = {}): SheetComment {
     const normalizedAddress = normalizeCellAddress(address);
     const currentSheetXml = this.getSheetIndex().xml;
     let nextSheetXml = currentSheetXml;
@@ -1508,6 +1549,12 @@ export class Sheet {
     if (nextContentTypesXml !== this.readContentTypesXml()) {
       this.writeContentTypesXml(nextContentTypesXml);
     }
+
+    return {
+      address: normalizedAddress,
+      author: options.author ?? previousComment?.author ?? existingComments[0]?.author ?? "fastxlsx",
+      text,
+    };
   }
 
   /**
@@ -2404,7 +2451,7 @@ export class Sheet {
    *
    * Returns the 1-based row number that was written.
    */
-  upsertRecord(field: string, record: Record<string, CellValue>, headerRowNumber = 1): number {
+  upsertRecord(field: string, record: Record<string, CellValue>, headerRowNumber = 1): SheetUpsertRecordResult {
     if (!Object.hasOwn(record, field)) {
       throw new XlsxError(`Record is missing match field: ${field}`);
     }
@@ -2416,11 +2463,19 @@ export class Sheet {
         (this.getSheetIndex().rowNumbers.at(-1) ?? headerRowNumber) + 1,
       );
       this.addRecord(record, headerRowNumber);
-      return nextRowNumber;
+      return {
+        inserted: true,
+        record: { ...record },
+        row: nextRowNumber,
+      };
     }
 
     this.setRecord(rowNumber, record, headerRowNumber);
-    return rowNumber;
+    return {
+      inserted: false,
+      record: { ...record },
+      row: rowNumber,
+    };
   }
 
   /**

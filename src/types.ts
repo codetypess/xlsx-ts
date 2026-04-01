@@ -324,6 +324,25 @@ export interface SheetComment {
   text: string;
 }
 
+export interface SheetCommentWriteOptions {
+  author?: string;
+}
+
+export interface SheetImportRecordsResult {
+  headers: string[];
+  imported: number;
+  inserted: number;
+  mode: "append" | "replace" | "upsert";
+  rowCount: number;
+  updated: number;
+}
+
+export interface SheetUpsertRecordResult {
+  inserted: boolean;
+  record: Record<string, CellValue>;
+  row: number;
+}
+
 export interface DataValidation {
   range: string;
   type: string | null;
