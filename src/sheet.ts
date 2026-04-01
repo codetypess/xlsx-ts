@@ -983,6 +983,13 @@ export class Sheet {
   }
 
   /**
+   * Alias for {@link getRecordBy}.
+   */
+  findRecordBy(field: string, value: CellValue, headerRowNumber = 1): Record<string, CellValue> | null {
+    return this.getRecordBy(field, value, headerRowNumber);
+  }
+
+  /**
    * Exports header-mapped records as JSON-ready objects.
    */
   toJson(headerRowNumber = 1): Array<Record<string, CellValue>> {
@@ -2387,6 +2394,13 @@ export class Sheet {
   }
 
   /**
+   * Alias for {@link addRecord}.
+   */
+  appendRecord(record: Record<string, CellValue>, headerRowNumber = 1): void {
+    this.addRecord(record, headerRowNumber);
+  }
+
+  /**
    * Appends multiple header-mapped records after the current used range.
    */
   addRecords(records: Array<Record<string, CellValue>>, headerRowNumber = 1): void {
@@ -2406,6 +2420,13 @@ export class Sheet {
       this.writeRecordRow(nextRowNumber, record, headerMap, false);
       nextRowNumber += 1;
     }
+  }
+
+  /**
+   * Alias for {@link addRecords}.
+   */
+  appendRecords(records: Array<Record<string, CellValue>>, headerRowNumber = 1): void {
+    this.addRecords(records, headerRowNumber);
   }
 
   /**
@@ -2444,6 +2465,13 @@ export class Sheet {
 
     const rowsToDelete = existingRecordRows.filter((rowNumber) => !targetRows.includes(rowNumber));
     this.deleteRecords(rowsToDelete, headerRowNumber);
+  }
+
+  /**
+   * Alias for {@link setRecords}.
+   */
+  replaceRecords(records: Array<Record<string, CellValue>>, headerRowNumber = 1): void {
+    this.setRecords(records, headerRowNumber);
   }
 
   /**
@@ -2527,6 +2555,13 @@ export class Sheet {
 
     this.deleteRecord(rowNumber, headerRowNumber);
     return true;
+  }
+
+  /**
+   * Alias for {@link deleteRecordBy}.
+   */
+  removeRecordBy(field: string, value: CellValue, headerRowNumber = 1): boolean {
+    return this.deleteRecordBy(field, value, headerRowNumber);
   }
 
   /**

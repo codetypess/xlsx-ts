@@ -3448,6 +3448,10 @@ test("record key APIs can get, upsert, and delete by field", async () => {
     { id: 1002, name: "Beta-2" },
     { id: 1003, name: "Gamma" },
   ]);
+
+  assert.deepEqual(sheet.findRecordBy("id", 1002), { id: 1002, name: "Beta-2" });
+  assert.equal(sheet.removeRecordBy("id", 1003), true);
+  assert.deepEqual(sheet.getRecords(), [{ id: 1002, name: "Beta-2" }]);
 });
 
 test("sheet JSON helpers roundtrip header-mapped records", async () => {
@@ -3571,6 +3575,21 @@ test("workbook can create config and table sheets through workflow helpers", asy
     { id: 1001, name: "Alpha" },
     { id: 1002, name: "Beta" },
   ]);
+});
+
+test("record alias APIs match the primary record helpers", async () => {
+  const workbook = Workbook.create("Data");
+  const sheet = workbook.getSheet("Data");
+
+  sheet.appendRecord({ id: 1001, name: "Alpha" });
+  sheet.appendRecords([{ id: 1002, name: "Beta" }]);
+  assert.deepEqual(sheet.getRecords(), [
+    { id: 1001, name: "Alpha" },
+    { id: 1002, name: "Beta" },
+  ]);
+
+  sheet.replaceRecords([{ id: 1003, name: "Gamma" }]);
+  assert.deepEqual(sheet.getRecords(), [{ id: 1003, name: "Gamma" }]);
 });
 
 test("record APIs can delete a record row", async () => {
