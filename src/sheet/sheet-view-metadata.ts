@@ -232,6 +232,28 @@ export function upsertSheetSelectionInSheetXml(
   return replaceNestedXmlTagSource(sheetXml, sheetViewsTag, sheetViewTag, nextSheetViewXml);
 }
 
+export function removeSheetSelectionFromSheetXml(sheetXml: string): string {
+  const { sheetViewsTag, sheetViewTag } = getSheetViewTags(sheetXml);
+  if (!sheetViewsTag || !sheetViewTag) {
+    return sheetXml;
+  }
+
+  const attributes = parseAttributes(sheetViewTag.attributesSource);
+  ensureXmlAttribute(attributes, "workbookViewId", "0");
+
+  const innerXml = sheetViewTag.innerXml ?? "";
+  const selectionTags = findXmlTags(innerXml, "selection");
+  if (selectionTags.length === 0) {
+    return sheetXml;
+  }
+
+  const cleanedInnerXml = removeXmlTagsFromInnerXml(innerXml, selectionTags);
+  const serializedAttributes = serializeAttributes(attributes);
+  const nextSheetViewXml = `<sheetView${serializedAttributes ? ` ${serializedAttributes}` : ""}>${cleanedInnerXml}</sheetView>`;
+
+  return replaceNestedXmlTagSource(sheetXml, sheetViewsTag, sheetViewTag, nextSheetViewXml);
+}
+
 function getSheetViewTags(sheetXml: string): {
   sheetViewTag: XmlTag | null;
   sheetViewsTag: XmlTag | null;

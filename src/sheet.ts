@@ -21,6 +21,8 @@ import type {
   Hyperlink,
   SheetComment,
   SheetCommentWriteOptions,
+  SheetProtection,
+  SheetProtectionOptions,
   SetDataValidationOptions,
   SetFormulaOptions,
   SetHyperlinkOptions,
@@ -115,10 +117,13 @@ import {
   buildDataValidationXml,
   parseHyperlinkRelationshipTargets,
   parseSheetAutoFilter,
+  parseSheetProtection,
   parseSheetDataValidations,
   parseSheetHyperlinks,
+  removeSheetProtectionFromSheetXml,
   removeAutoFilterFromSheetXml,
   removeDataValidationFromSheetXml,
+  upsertSheetProtectionInSheetXml,
   upsertAutoFilterInSheetXml,
   upsertDataValidationInSheetXml,
 } from "./sheet/sheet-metadata.js";
@@ -177,6 +182,7 @@ import {
   parseSheetFreezePane,
   parseSheetSelection,
   removeFreezePaneFromSheetXml,
+  removeSheetSelectionFromSheetXml,
   upsertFreezePaneInSheetXml,
   upsertSheetSelectionInSheetXml,
 } from "./sheet/sheet-view-metadata.js";
@@ -1230,6 +1236,39 @@ export class Sheet {
   }
 
   /**
+   * Reads worksheet protection settings, if present.
+   */
+  getProtection(): SheetProtection | null {
+    return parseSheetProtection(this.getSheetIndex().xml);
+  }
+
+  /**
+   * Enables worksheet protection.
+   */
+  protect(options: SheetProtectionOptions = {}): SheetProtection {
+    const currentSheetXml = this.getSheetIndex().xml;
+    const nextSheetXml = upsertSheetProtectionInSheetXml(currentSheetXml, options);
+
+    if (nextSheetXml !== currentSheetXml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+
+    return this.getProtection()!;
+  }
+
+  /**
+   * Removes worksheet protection.
+   */
+  unprotect(): void {
+    const currentSheetXml = this.getSheetIndex().xml;
+    const nextSheetXml = removeSheetProtectionFromSheetXml(currentSheetXml);
+
+    if (nextSheetXml !== currentSheetXml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
    * Reads a rectangular cell range using A1 notation.
    */
   getRange(range: string): CellValue[][] {
@@ -1444,6 +1483,14 @@ export class Sheet {
   }
 
   /**
+   * Reads one worksheet data validation rule by range.
+   */
+  getDataValidation(range: string): DataValidation | null {
+    const normalizedRange = normalizeSqref(range);
+    return this.getDataValidations().find((validation) => validation.range === normalizedRange) ?? null;
+  }
+
+  /**
    * Lists worksheet tables with their ranges and backing part paths.
    */
   getTables(): Array<{ name: string; displayName: string; range: string; path: string }> {
@@ -1485,6 +1532,21 @@ export class Sheet {
   }
 
   /**
+   * Reads one worksheet hyperlink by cell address.
+   */
+  getHyperlink(address: string): Hyperlink | null {
+    const normalizedAddress = normalizeCellAddress(address);
+    return this.getHyperlinks().find((hyperlink) => hyperlink.address === normalizedAddress) ?? null;
+  }
+
+  /**
+   * Alias for {@link getHyperlink}.
+   */
+  hyperlink(address: string): Hyperlink | null {
+    return this.getHyperlink(address);
+  }
+
+  /**
    * Creates or replaces a hyperlink at the given cell address.
    */
   setHyperlink(address: string, target: string, options: SetHyperlinkOptions = {}): void {
@@ -1519,6 +1581,15 @@ export class Sheet {
 
     if (nextState.relationshipsXml !== currentRelationshipsXml) {
       this.writeSheetRelationshipsXml(nextState.relationshipsXml);
+    }
+  }
+
+  /**
+   * Removes all worksheet hyperlinks.
+   */
+  clearHyperlinks(): void {
+    for (const hyperlink of this.getHyperlinks()) {
+      this.removeHyperlink(hyperlink.address);
     }
   }
 
@@ -1692,6 +1763,13 @@ export class Sheet {
   }
 
   /**
+   * Alias for {@link removeAutoFilter}.
+   */
+  clearAutoFilter(): void {
+    this.removeAutoFilter();
+  }
+
+  /**
    * Freezes the top rows and left columns.
    *
    * Numeric arguments are counts, not zero-based indexes.
@@ -1734,6 +1812,17 @@ export class Sheet {
   }
 
   /**
+   * Removes worksheet selection metadata.
+   */
+  clearSelection(): void {
+    const nextSheetXml = removeSheetSelectionFromSheetXml(this.getSheetIndex().xml);
+
+    if (nextSheetXml !== this.getSheetIndex().xml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
    * Creates or replaces a data validation rule for a range.
    */
   setDataValidation(range: string, options: SetDataValidationOptions = {}): void {
@@ -1746,6 +1835,15 @@ export class Sheet {
 
     if (nextSheetXml !== this.getSheetIndex().xml) {
       this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
+   * Removes all worksheet data validation rules.
+   */
+  clearDataValidations(): void {
+    for (const validation of this.getDataValidations()) {
+      this.removeDataValidation(validation.range);
     }
   }
 
@@ -2367,6 +2465,13 @@ export class Sheet {
     const normalizedRange = normalizeRangeRef(range);
     const ranges = this.getMergedRanges().filter((candidate) => candidate !== normalizedRange);
     this.writeSheetXml(updateMergedRanges(this.getSheetIndex().xml, ranges));
+  }
+
+  /**
+   * Removes all merged ranges from the worksheet.
+   */
+  clearMergedRanges(): void {
+    this.writeSheetXml(updateMergedRanges(this.getSheetIndex().xml, []));
   }
 
   /**

@@ -2,7 +2,7 @@ import { Command } from "commander";
 
 import { parseJsonCellValue, writeJson } from "./cli-json.js";
 import type { CellError, CellValue, DefinedName, SheetVisibility } from "../types.js";
-import { parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
+import { parseNonNegativeInteger, parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
 import type { CliCommandIo } from "./cli-shared.js";
 import { Workbook } from "../workbook.js";
 
@@ -40,6 +40,22 @@ export function registerWorkbookCommands(
   program: Command,
   io: CliCommandIo,
 ): void {
+  const workbookCommand = program
+    .command("workbook")
+    .description("Workflow-oriented workbook metadata commands");
+
+  const activeCommand = workbookCommand
+    .command("active")
+    .description("Workbook active-sheet commands");
+
+  const visibilityCommand = workbookCommand
+    .command("visibility")
+    .description("Workbook sheet visibility commands");
+
+  const definedNameCommand = workbookCommand
+    .command("defined-name")
+    .description("Workbook defined-name commands");
+
   program
     .command("create")
     .argument("<file>", "output xlsx file")
@@ -73,6 +89,208 @@ export function registerWorkbookCommands(
       const result = await getCell(resolveFrom(io.cwd, file), options.sheet, options.cell);
       writeJson(io.stdout, result);
     });
+
+  activeCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .action(async (file: string) => {
+      const inputPath = resolveFrom(io.cwd, file);
+      const workbook = await Workbook.open(inputPath);
+      writeJson(io.stdout, {
+        activeSheet: workbook.getActiveSheet().name,
+        file: inputPath,
+      });
+    });
+
+  activeCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        workbook.setActiveSheet(options.sheet);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "workbook.active.set",
+          activeSheet: workbook.getActiveSheet().name,
+          input: inputPath,
+          output: outputPath,
+        });
+      },
+    );
+
+  visibilityCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const inputPath = resolveFrom(io.cwd, file);
+      const workbook = await Workbook.open(inputPath);
+      writeJson(io.stdout, {
+        file: inputPath,
+        sheet: options.sheet,
+        visibility: workbook.getSheetVisibility(options.sheet),
+      });
+    });
+
+  visibilityCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--visibility <value>", "visible, hidden, or veryHidden")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+          visibility: SheetVisibility;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        workbook.setSheetVisibility(options.sheet, options.visibility);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "workbook.visibility.set",
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+          visibility: workbook.getSheetVisibility(options.sheet),
+        });
+      },
+    );
+
+  definedNameCommand
+    .command("list")
+    .argument("<file>", "input xlsx file")
+    .option("--scope <sheet>", "optional sheet scope filter")
+    .action(async (file: string, options: { scope?: string }) => {
+      const inputPath = resolveFrom(io.cwd, file);
+      const workbook = await Workbook.open(inputPath);
+      const definedNames = options.scope
+        ? workbook.getDefinedNames().filter((definedName) => definedName.scope === options.scope)
+        : workbook.getDefinedNames();
+      writeJson(io.stdout, {
+        definedNames,
+        file: inputPath,
+      });
+    });
+
+  definedNameCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--name <value>", "defined name")
+    .option("--scope <sheet>", "optional sheet scope")
+    .action(async (file: string, options: { name: string; scope?: string }) => {
+      const inputPath = resolveFrom(io.cwd, file);
+      const workbook = await Workbook.open(inputPath);
+      const definedName = workbook.getDefinedNames().find(
+        (candidate) => candidate.name === options.name && candidate.scope === (options.scope ?? null),
+      ) ?? null;
+      writeJson(io.stdout, {
+        definedName,
+        file: inputPath,
+      });
+    });
+
+  definedNameCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--name <value>", "defined name")
+    .requiredOption("--value <ref>", "defined name formula or reference")
+    .option("--scope <sheet>", "optional sheet scope")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          name: string;
+          output?: string;
+          scope?: string;
+          value: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        workbook.setDefinedName(options.name, options.value, {
+          scope: options.scope,
+        });
+        await workbook.save(outputPath);
+        const definedName = workbook.getDefinedNames().find(
+          (candidate) => candidate.name === options.name && candidate.scope === (options.scope ?? null),
+        ) ?? null;
+        writeJson(io.stdout, {
+          action: "workbook.definedName.set",
+          definedName,
+          input: inputPath,
+          output: outputPath,
+        });
+      },
+    );
+
+  definedNameCommand
+    .command("delete")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--name <value>", "defined name")
+    .option("--scope <sheet>", "optional sheet scope")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          name: string;
+          output?: string;
+          scope?: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const deleted = workbook.getDefinedName(options.name, options.scope) !== null;
+        workbook.deleteDefinedName(options.name, options.scope);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "workbook.definedName.delete",
+          deleted,
+          input: inputPath,
+          output: outputPath,
+        });
+      },
+    );
 
   program
     .command("add-sheet")
@@ -133,6 +351,40 @@ export function registerWorkbookCommands(
         await workbook.save(outputPath);
         writeJson(io.stdout, {
           action: "renameSheet",
+          input: inputPath,
+          output: outputPath,
+          sheets: workbook.getSheets().map((sheet) => sheet.name),
+        });
+      },
+    );
+
+  program
+    .command("move-sheet")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name to move")
+    .requiredOption("--index <number>", "target sheet index (0-based)", parseNonNegativeInteger)
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          index: number;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        workbook.moveSheet(options.sheet, options.index);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "moveSheet",
           input: inputPath,
           output: outputPath,
           sheets: workbook.getSheets().map((sheet) => sheet.name),

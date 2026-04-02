@@ -49,6 +49,27 @@ export function parsePositiveInteger(value: string): number {
   return parsed;
 }
 
+export function parseNonNegativeInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new InvalidArgumentError(`Expected a non-negative integer, got: ${value}`);
+  }
+
+  return parsed;
+}
+
+export function parseBooleanValue(value: string): boolean {
+  if (value === "true" || value === "1") {
+    return true;
+  }
+
+  if (value === "false" || value === "0") {
+    return false;
+  }
+
+  throw new InvalidArgumentError(`Expected a boolean value (true/false), got: ${value}`);
+}
+
 export function resolveFrom(cwd: string, targetPath: string): string {
   return resolve(cwd, targetPath);
 }

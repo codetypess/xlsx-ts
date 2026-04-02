@@ -23,6 +23,7 @@ npm i fastxlsx
 ```bash
 npx fastxlsx create path/to/new.xlsx --sheet Sheet1
 npx fastxlsx inspect path/to/file.xlsx
+npx fastxlsx move-sheet path/to/file.xlsx --sheet Archive --index 0 --in-place
 npx fastxlsx get path/to/file.xlsx --sheet Sheet1 --cell B2
 ```
 
@@ -37,6 +38,7 @@ npx fastxlsx inspect path/to/file.xlsx
 ```bash
 npm run cli -- create path/to/new.xlsx --sheet Sheet1
 npm run cli -- inspect path/to/file.xlsx
+npm run cli -- move-sheet path/to/file.xlsx --sheet Archive --index 0 --in-place
 ```
 
 ## 作为库使用
@@ -213,9 +215,19 @@ workbook.createTableSheet("Rewards", {
 通过工作流 CLI 做导入导出和注释：
 
 ```bash
+npm run cli -- workbook active set out.xlsx --sheet Summary --in-place
+npm run cli -- workbook visibility set out.xlsx --sheet Archive --visibility hidden --in-place
+npm run cli -- workbook defined-name set out.xlsx --name Scores --value 'Summary!$A$1:$B$10' --in-place
 npm run cli -- sheet import input.xlsx --sheet Data --format json --from rows.json --output out.xlsx
 npm run cli -- sheet export out.xlsx --sheet Data --format csv --output rows.csv
+npm run cli -- sheet records append out.xlsx --sheet Data --records '[{"id":1003,"name":"Gamma"}]' --in-place
 npm run cli -- sheet records upsert out.xlsx --sheet Data --key-field id --record '{"id":1002,"name":"Beta"}' --in-place
+npm run cli -- sheet hyperlink set out.xlsx --sheet Data --cell A2 --target https://example.com --text "Open" --in-place
+npm run cli -- sheet filter set out.xlsx --sheet Data --range A1:C20 --in-place
+npm run cli -- sheet selection set out.xlsx --sheet Data --active-cell C3 --range C3:D4 --in-place
+npm run cli -- sheet validation set out.xlsx --sheet Data --range B2:B20 --type whole --operator between --formula1 1 --formula2 10 --in-place
+npm run cli -- sheet merge add out.xlsx --sheet Data --range A1:B2 --in-place
+npm run cli -- sheet protection set out.xlsx --sheet Data --sort --auto-filter --in-place
 npm run cli -- sheet comment set out.xlsx --sheet Data --cell C2 --text "Final score" --in-place
 ```
 
@@ -373,26 +385,37 @@ npm run cli -- sheet comment set out.xlsx --sheet Data --cell C2 --text "Final s
 - `sheet.getFreezePane()`
 - `sheet.getSelection()`
 - `sheet.getDataValidations()`
+- `sheet.getDataValidation(range)`
 - `sheet.getTables()`
 - `sheet.getComments()`
 - `sheet.getComment(address)`
+- `sheet.getHyperlink(address)`
+- `sheet.hyperlink(address)`
 - `sheet.getHyperlinks()`
 - `sheet.getPrintArea()`
 - `sheet.getPrintTitles()`
+- `sheet.getProtection()`
 - `sheet.addTable(range, options?)`
 - `sheet.removeTable(name)`
 - `sheet.setComment(address, text, options?)`
+- `sheet.clearComments()`
 - `sheet.removeComment(address)`
+- `sheet.protect(options?)`
+- `sheet.unprotect()`
 - `sheet.setHyperlink(address, target, options?)`
+- `sheet.clearHyperlinks()`
 - `sheet.removeHyperlink(address)`
 - `sheet.setAutoFilter(range)`
+- `sheet.clearAutoFilter()`
 - `sheet.setPrintArea(range)`
 - `sheet.setPrintTitles(options)`
 - `sheet.freezePane(columnCount, rowCount?)`
 - `sheet.unfreezePane()`
 - `sheet.setSelection(activeCell, range?)`
+- `sheet.clearSelection()`
 - `sheet.removeAutoFilter()`
 - `sheet.setDataValidation(range, options?)`
+- `sheet.clearDataValidations()`
 - `sheet.removeDataValidation(range)`
 - `sheet.setCell(address, value)`
 - `sheet.setCell(rowNumber, column, value)`
@@ -433,6 +456,7 @@ npm run cli -- sheet comment set out.xlsx --sheet Data --cell C2 --text "Final s
 - `sheet.setRangeBackgroundColor(range, color)`
 - `sheet.copyRangeStyle(sourceRange, targetRange)`
 - `sheet.addMergedRange(range)`
+- `sheet.clearMergedRanges()`
 - `sheet.removeMergedRange(range)`
 - `sheet.getFormula(address)`
 - `sheet.getFormula(rowNumber, column)`

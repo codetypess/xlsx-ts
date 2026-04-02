@@ -1,4 +1,10 @@
-import type { DataValidation, Hyperlink, SetDataValidationOptions } from "../types.js";
+import type {
+  DataValidation,
+  Hyperlink,
+  SetDataValidationOptions,
+  SheetProtection,
+  SheetProtectionOptions,
+} from "../types.js";
 import { XlsxError } from "../errors.js";
 import { findFirstXmlTag, findXmlTags, getTagAttr, type XmlTag } from "../utils/xml-read.js";
 import { decodeXmlText, escapeXmlText, serializeAttributes } from "../utils/xml.js";
@@ -67,6 +73,56 @@ const DATA_VALIDATIONS_FOLLOWING_TAGS = [
   "tableParts",
   "extLst",
 ];
+
+const SHEET_PROTECTION_FOLLOWING_TAGS = [
+  "protectedRanges",
+  "scenarios",
+  "autoFilter",
+  "sortState",
+  "mergeCells",
+  "phoneticPr",
+  "conditionalFormatting",
+  "dataValidations",
+  "hyperlinks",
+  "printOptions",
+  "pageMargins",
+  "pageSetup",
+  "headerFooter",
+  "rowBreaks",
+  "colBreaks",
+  "customProperties",
+  "cellWatches",
+  "ignoredErrors",
+  "smartTags",
+  "drawing",
+  "legacyDrawing",
+  "legacyDrawingHF",
+  "picture",
+  "oleObjects",
+  "controls",
+  "webPublishItems",
+  "tableParts",
+  "extLst",
+];
+
+const SHEET_PROTECTION_BOOLEAN_ATTRIBUTES = [
+  "sheet",
+  "objects",
+  "scenarios",
+  "formatCells",
+  "formatColumns",
+  "formatRows",
+  "insertColumns",
+  "insertRows",
+  "insertHyperlinks",
+  "deleteColumns",
+  "deleteRows",
+  "selectLockedCells",
+  "sort",
+  "autoFilter",
+  "pivotTables",
+  "selectUnlockedCells",
+] as const;
 
 export function parseSheetAutoFilter(sheetXml: string): string | null {
   const autoFilterTag = findFirstXmlTag(sheetXml, "autoFilter");
@@ -225,6 +281,74 @@ export function removeDataValidationFromSheetXml(sheetXml: string, range: string
         );
 
   return replaceXmlTagSource(sheetXml, dataValidationsTag, nextDataValidationsXml);
+}
+
+export function parseSheetProtection(sheetXml: string): SheetProtection | null {
+  const protectionTag = findFirstXmlTag(sheetXml, "sheetProtection");
+  if (!protectionTag) {
+    return null;
+  }
+
+  return {
+    autoFilter: parseOptionalXmlBoolean(getTagAttr(protectionTag, "autoFilter")),
+    deleteColumns: parseOptionalXmlBoolean(getTagAttr(protectionTag, "deleteColumns")),
+    deleteRows: parseOptionalXmlBoolean(getTagAttr(protectionTag, "deleteRows")),
+    formatCells: parseOptionalXmlBoolean(getTagAttr(protectionTag, "formatCells")),
+    formatColumns: parseOptionalXmlBoolean(getTagAttr(protectionTag, "formatColumns")),
+    formatRows: parseOptionalXmlBoolean(getTagAttr(protectionTag, "formatRows")),
+    insertColumns: parseOptionalXmlBoolean(getTagAttr(protectionTag, "insertColumns")),
+    insertHyperlinks: parseOptionalXmlBoolean(getTagAttr(protectionTag, "insertHyperlinks")),
+    insertRows: parseOptionalXmlBoolean(getTagAttr(protectionTag, "insertRows")),
+    objects: parseOptionalXmlBoolean(getTagAttr(protectionTag, "objects")),
+    passwordHash: getTagAttr(protectionTag, "password") ?? null,
+    pivotTables: parseOptionalXmlBoolean(getTagAttr(protectionTag, "pivotTables")),
+    scenarios: parseOptionalXmlBoolean(getTagAttr(protectionTag, "scenarios")),
+    selectLockedCells: parseOptionalXmlBoolean(getTagAttr(protectionTag, "selectLockedCells")),
+    selectUnlockedCells: parseOptionalXmlBoolean(getTagAttr(protectionTag, "selectUnlockedCells")),
+    sheet: parseOptionalXmlBoolean(getTagAttr(protectionTag, "sheet")) ?? true,
+    sort: parseOptionalXmlBoolean(getTagAttr(protectionTag, "sort")),
+  };
+}
+
+export function upsertSheetProtectionInSheetXml(
+  sheetXml: string,
+  options: SheetProtectionOptions = {},
+): string {
+  const attributes: Array<[string, string]> = [["sheet", "1"]];
+
+  for (const name of SHEET_PROTECTION_BOOLEAN_ATTRIBUTES) {
+    if (name === "sheet") {
+      continue;
+    }
+
+    const value = options[name];
+    if (value !== undefined) {
+      attributes.push([name, value ? "1" : "0"]);
+    }
+  }
+
+  if (options.passwordHash !== undefined) {
+    attributes.push(["password", options.passwordHash]);
+  }
+
+  const protectionXml = `<sheetProtection ${serializeAttributes(attributes)}/>`;
+  const protectionTag = findFirstXmlTag(sheetXml, "sheetProtection");
+
+  if (protectionTag) {
+    return replaceXmlTagSource(sheetXml, protectionTag, protectionXml);
+  }
+
+  const insertionIndex = findWorksheetChildInsertionIndex(sheetXml, SHEET_PROTECTION_FOLLOWING_TAGS);
+  return sheetXml.slice(0, insertionIndex) + protectionXml + sheetXml.slice(insertionIndex);
+}
+
+export function removeSheetProtectionFromSheetXml(sheetXml: string): string {
+  const protectionTag = findFirstXmlTag(sheetXml, "sheetProtection");
+  if (!protectionTag) {
+    return sheetXml;
+  }
+
+  return replaceXmlTagSource(sheetXml, protectionTag, "");
 }
 
 export function parseSheetHyperlinks(

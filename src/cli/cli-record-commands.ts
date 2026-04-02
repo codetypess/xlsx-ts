@@ -12,7 +12,7 @@ import {
   writeJson,
 } from "./cli-json.js";
 import type { CellRecord } from "./cli-json.js";
-import { parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
+import { parseBooleanValue, parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
 import type { CliCommandIo } from "./cli-shared.js";
 import { Workbook } from "../workbook.js";
 
@@ -22,7 +22,7 @@ export function registerRecordCommands(
 ): void {
   const sheetCommand = program
     .command("sheet")
-    .description("Workflow-oriented sheet import/export and comment commands");
+    .description("Workflow-oriented sheet metadata and record commands");
 
   sheetCommand
     .command("export")
@@ -164,6 +164,30 @@ export function registerRecordCommands(
     .command("comment")
     .description("Worksheet comment commands");
 
+  const hyperlinkCommand = sheetCommand
+    .command("hyperlink")
+    .description("Worksheet hyperlink commands");
+
+  const filterCommand = sheetCommand
+    .command("filter")
+    .description("Worksheet auto-filter commands");
+
+  const selectionCommand = sheetCommand
+    .command("selection")
+    .description("Worksheet selection commands");
+
+  const validationCommand = sheetCommand
+    .command("validation")
+    .description("Worksheet data validation commands");
+
+  const mergeCommand = sheetCommand
+    .command("merge")
+    .description("Worksheet merged range commands");
+
+  const protectionCommand = sheetCommand
+    .command("protection")
+    .description("Worksheet protection commands");
+
   const sheetRecordsCommand = sheetCommand
     .command("records")
     .description("Workflow-oriented sheet record commands");
@@ -293,6 +317,30 @@ export function registerRecordCommands(
     );
 
   sheetRecordsCommand
+    .command("list")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--header-row <row>", "header row used for record mapping", parsePositiveInteger, 1)
+    .action(
+      async (
+        file: string,
+        options: {
+          headerRow: number;
+          sheet: string;
+        },
+      ) => {
+        const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+        const sheet = workbook.getSheet(options.sheet);
+        writeJson(io.stdout, {
+          action: "sheet.records.list",
+          headers: sheet.getHeaders(options.headerRow),
+          records: sheet.getRecords(options.headerRow),
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  sheetRecordsCommand
     .command("get")
     .argument("<file>", "input xlsx file")
     .requiredOption("--sheet <name>", "sheet name")
@@ -316,6 +364,92 @@ export function registerRecordCommands(
         writeJson(io.stdout, {
           action: "sheet.records.get",
           record: sheet.findRecordBy(options.keyField, resolveMatchValue(options.value, options.text), options.headerRow),
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  sheetRecordsCommand
+    .command("append")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--record <json>", "JSON object keyed by header names")
+    .option("--records <json>", "JSON array of record objects keyed by header names")
+    .option("--header-row <row>", "header row used for record mapping", parsePositiveInteger, 1)
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          headerRow: number;
+          inPlace?: boolean;
+          output?: string;
+          record?: string;
+          records?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const records = parseSheetRecordInputs(options.record, options.records);
+        sheet.appendRecords(records, options.headerRow);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.records.append",
+          appended: records.length,
+          headers: sheet.getHeaders(options.headerRow),
+          input: inputPath,
+          output: outputPath,
+          records: sheet.getRecords(options.headerRow),
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  sheetRecordsCommand
+    .command("replace")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--record <json>", "JSON object keyed by header names")
+    .option("--records <json>", "JSON array of record objects keyed by header names")
+    .option("--header-row <row>", "header row used for record mapping", parsePositiveInteger, 1)
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          headerRow: number;
+          inPlace?: boolean;
+          output?: string;
+          record?: string;
+          records?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const records = parseSheetRecordInputs(options.record, options.records);
+        sheet.replaceRecords(records, options.headerRow);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.records.replace",
+          headers: sheet.getHeaders(options.headerRow),
+          input: inputPath,
+          output: outputPath,
+          records: sheet.getRecords(options.headerRow),
+          replaced: records.length,
           sheet: options.sheet,
         });
       },
@@ -410,6 +544,18 @@ export function registerRecordCommands(
     );
 
   commentCommand
+    .command("list")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        comments: workbook.getSheet(options.sheet).getComments(),
+        sheet: options.sheet,
+      });
+    });
+
+  commentCommand
     .command("get")
     .argument("<file>", "input xlsx file")
     .requiredOption("--sheet <name>", "sheet name")
@@ -495,6 +641,760 @@ export function registerRecordCommands(
           deleted: existed,
           input: inputPath,
           output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  commentCommand
+    .command("clear")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const deleted = sheet.getComments().length;
+        sheet.clearComments();
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.comment.clear",
+          cleared: deleted,
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  hyperlinkCommand
+    .command("list")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        hyperlinks: workbook.getSheet(options.sheet).getHyperlinks(),
+        sheet: options.sheet,
+      });
+    });
+
+  hyperlinkCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--cell <address>", "cell address")
+    .action(async (file: string, options: { cell: string; sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        hyperlink: workbook.getSheet(options.sheet).getHyperlink(options.cell),
+        sheet: options.sheet,
+      });
+    });
+
+  hyperlinkCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--cell <address>", "cell address")
+    .requiredOption("--target <value>", "hyperlink target")
+    .option("--text <value>", "replace the cell text")
+    .option("--tooltip <value>", "hyperlink tooltip")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          cell: string;
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+          target: string;
+          text?: string;
+          tooltip?: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.setHyperlink(options.cell, options.target, {
+          text: options.text,
+          tooltip: options.tooltip,
+        });
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.hyperlink.set",
+          hyperlink: sheet.getHyperlink(options.cell),
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  hyperlinkCommand
+    .command("delete")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--cell <address>", "cell address")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          cell: string;
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const existed = sheet.getHyperlink(options.cell) !== null;
+        sheet.removeHyperlink(options.cell);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.hyperlink.delete",
+          deleted: existed,
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  hyperlinkCommand
+    .command("clear")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const cleared = sheet.getHyperlinks().length;
+        sheet.clearHyperlinks();
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.hyperlink.clear",
+          cleared,
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  filterCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        autoFilter: workbook.getSheet(options.sheet).getAutoFilter(),
+        sheet: options.sheet,
+      });
+    });
+
+  filterCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--range <ref>", "filter range")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          range: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.setAutoFilter(options.range);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.filter.set",
+          autoFilter: sheet.getAutoFilter(),
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  filterCommand
+    .command("clear")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.clearAutoFilter();
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.filter.clear",
+          autoFilter: null,
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  selectionCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        selection: workbook.getSheet(options.sheet).getSelection(),
+        sheet: options.sheet,
+      });
+    });
+
+  selectionCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--active-cell <address>", "active cell address")
+    .option("--range <sqref>", "selection range")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          activeCell: string;
+          inPlace?: boolean;
+          output?: string;
+          range?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.setSelection(options.activeCell, options.range ?? options.activeCell);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.selection.set",
+          input: inputPath,
+          output: outputPath,
+          selection: sheet.getSelection(),
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  selectionCommand
+    .command("clear")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.clearSelection();
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.selection.clear",
+          input: inputPath,
+          output: outputPath,
+          selection: null,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  validationCommand
+    .command("list")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        sheet: options.sheet,
+        validations: workbook.getSheet(options.sheet).getDataValidations(),
+      });
+    });
+
+  validationCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--range <sqref>", "validation range")
+    .action(async (file: string, options: { range: string; sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        sheet: options.sheet,
+        validation: workbook.getSheet(options.sheet).getDataValidation(options.range),
+      });
+    });
+
+  validationCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--range <sqref>", "validation range")
+    .option("--type <value>", "validation type")
+    .option("--operator <value>", "validation operator")
+    .option("--allow-blank <value>", "allow blank values (true/false)", parseBooleanValue)
+    .option("--show-input-message <value>", "show the input prompt (true/false)", parseBooleanValue)
+    .option("--show-error-message <value>", "show the error message (true/false)", parseBooleanValue)
+    .option("--show-drop-down <value>", "show the dropdown arrow (true/false)", parseBooleanValue)
+    .option("--error-style <value>", "error style")
+    .option("--error-title <value>", "error title")
+    .option("--error <value>", "error message")
+    .option("--prompt-title <value>", "prompt title")
+    .option("--prompt <value>", "prompt message")
+    .option("--ime-mode <value>", "IME mode")
+    .option("--formula1 <value>", "first formula")
+    .option("--formula2 <value>", "second formula")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          allowBlank?: boolean;
+          error?: string;
+          errorStyle?: string;
+          errorTitle?: string;
+          formula1?: string;
+          formula2?: string;
+          imeMode?: string;
+          inPlace?: boolean;
+          operator?: string;
+          output?: string;
+          prompt?: string;
+          promptTitle?: string;
+          range: string;
+          sheet: string;
+          showDropDown?: boolean;
+          showErrorMessage?: boolean;
+          showInputMessage?: boolean;
+          type?: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.setDataValidation(options.range, buildValidationOptions(options));
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.validation.set",
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+          validation: sheet.getDataValidation(options.range),
+        });
+      },
+    );
+
+  validationCommand
+    .command("delete")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--range <sqref>", "validation range")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          range: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const deleted = sheet.getDataValidation(options.range) !== null;
+        sheet.removeDataValidation(options.range);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.validation.delete",
+          deleted,
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  validationCommand
+    .command("clear")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const cleared = sheet.getDataValidations().length;
+        sheet.clearDataValidations();
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.validation.clear",
+          cleared,
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  mergeCommand
+    .command("list")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        mergedRanges: workbook.getSheet(options.sheet).getMergedRanges(),
+        sheet: options.sheet,
+      });
+    });
+
+  mergeCommand
+    .command("add")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--range <ref>", "merged range")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          range: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.addMergedRange(options.range);
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.merge.add",
+          input: inputPath,
+          mergedRanges: sheet.getMergedRanges(),
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  mergeCommand
+    .command("remove")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--range <ref>", "merged range")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          range: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const beforeCount = sheet.getMergedRanges().length;
+        sheet.removeMergedRange(options.range);
+        const deleted = sheet.getMergedRanges().length !== beforeCount;
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.merge.remove",
+          deleted,
+          input: inputPath,
+          mergedRanges: sheet.getMergedRanges(),
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  mergeCommand
+    .command("clear")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        const cleared = sheet.getMergedRanges().length;
+        sheet.clearMergedRanges();
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.merge.clear",
+          cleared,
+          input: inputPath,
+          mergedRanges: [],
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  protectionCommand
+    .command("get")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .action(async (file: string, options: { sheet: string }) => {
+      const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      writeJson(io.stdout, {
+        protection: workbook.getSheet(options.sheet).getProtection(),
+        sheet: options.sheet,
+      });
+    });
+
+  protectionCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--password-hash <hash>", "precomputed legacy password hash")
+    .option("--auto-filter", "allow auto filter while protected")
+    .option("--delete-columns", "allow deleting columns while protected")
+    .option("--delete-rows", "allow deleting rows while protected")
+    .option("--format-cells", "allow formatting cells while protected")
+    .option("--format-columns", "allow formatting columns while protected")
+    .option("--format-rows", "allow formatting rows while protected")
+    .option("--insert-columns", "allow inserting columns while protected")
+    .option("--insert-hyperlinks", "allow inserting hyperlinks while protected")
+    .option("--insert-rows", "allow inserting rows while protected")
+    .option("--objects", "allow editing objects while protected")
+    .option("--pivot-tables", "allow pivot table usage while protected")
+    .option("--scenarios", "allow editing scenarios while protected")
+    .option("--sort", "allow sorting while protected")
+    .option("--select-locked-cells", "allow selecting locked cells")
+    .option("--select-unlocked-cells", "allow selecting unlocked cells")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          autoFilter?: boolean;
+          deleteColumns?: boolean;
+          deleteRows?: boolean;
+          formatCells?: boolean;
+          formatColumns?: boolean;
+          formatRows?: boolean;
+          inPlace?: boolean;
+          insertColumns?: boolean;
+          insertHyperlinks?: boolean;
+          insertRows?: boolean;
+          objects?: boolean;
+          output?: string;
+          passwordHash?: string;
+          pivotTables?: boolean;
+          scenarios?: boolean;
+          selectLockedCells?: boolean;
+          selectUnlockedCells?: boolean;
+          sheet: string;
+          sort?: boolean;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const protection = workbook.getSheet(options.sheet).protect({
+          autoFilter: options.autoFilter,
+          deleteColumns: options.deleteColumns,
+          deleteRows: options.deleteRows,
+          formatCells: options.formatCells,
+          formatColumns: options.formatColumns,
+          formatRows: options.formatRows,
+          insertColumns: options.insertColumns,
+          insertHyperlinks: options.insertHyperlinks,
+          insertRows: options.insertRows,
+          objects: options.objects,
+          passwordHash: options.passwordHash,
+          pivotTables: options.pivotTables,
+          scenarios: options.scenarios,
+          selectLockedCells: options.selectLockedCells,
+          selectUnlockedCells: options.selectUnlockedCells,
+          sort: options.sort,
+        });
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.protection.set",
+          input: inputPath,
+          output: outputPath,
+          protection,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  protectionCommand
+    .command("clear")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        workbook.getSheet(options.sheet).unprotect();
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.protection.clear",
+          input: inputPath,
+          output: outputPath,
+          protection: null,
           sheet: options.sheet,
         });
       },
@@ -920,6 +1820,71 @@ function parseJsonNumberArray(source: string, label: string): number[] {
 
     return value;
   });
+}
+
+function buildValidationOptions(options: {
+  allowBlank?: boolean;
+  error?: string;
+  errorStyle?: string;
+  errorTitle?: string;
+  formula1?: string;
+  formula2?: string;
+  imeMode?: string;
+  operator?: string;
+  prompt?: string;
+  promptTitle?: string;
+  showDropDown?: boolean;
+  showErrorMessage?: boolean;
+  showInputMessage?: boolean;
+  type?: string;
+}): {
+  allowBlank?: boolean;
+  error?: string;
+  errorStyle?: string;
+  errorTitle?: string;
+  formula1?: string;
+  formula2?: string;
+  imeMode?: string;
+  operator?: string;
+  prompt?: string;
+  promptTitle?: string;
+  showDropDown?: boolean;
+  showErrorMessage?: boolean;
+  showInputMessage?: boolean;
+  type?: string;
+} {
+  return {
+    allowBlank: options.allowBlank,
+    error: options.error,
+    errorStyle: options.errorStyle,
+    errorTitle: options.errorTitle,
+    formula1: options.formula1,
+    formula2: options.formula2,
+    imeMode: options.imeMode,
+    operator: options.operator,
+    prompt: options.prompt,
+    promptTitle: options.promptTitle,
+    showDropDown: options.showDropDown,
+    showErrorMessage: options.showErrorMessage,
+    showInputMessage: options.showInputMessage,
+    type: options.type,
+  };
+}
+
+function parseSheetRecordInputs(record?: string, records?: string): CellRecord[] {
+  if (record && records) {
+    throw new Error("Use either --record or --records, not both");
+  }
+
+  if (record) {
+    return [parseJsonCellRecord(record, "--record")];
+  }
+
+  if (records) {
+    return parseJsonCellRecordArray(records, "--records");
+  }
+
+  throw new Error("Pass --record or --records");
 }
 
 async function getRecords(

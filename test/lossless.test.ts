@@ -3714,6 +3714,11 @@ test("merged range APIs patch mergeCells without touching unrelated parts", asyn
 
   sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.doesNotMatch(sheetXml, /<mergeCells\b/);
+
+  sheet.addMergedRange("E5:D4");
+  assert.deepEqual(sheet.getMergedRanges(), ["D4:E5"]);
+  sheet.clearMergedRanges();
+  assert.deepEqual(sheet.getMergedRanges(), []);
 });
 
 test("column and merged range writers tolerate single-quoted container tags", async () => {
@@ -4122,6 +4127,11 @@ test("sheet selection APIs read, write, and follow frozen active panes", async (
   sheet.setSelection("A1", "A1:B2");
   sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<selection activeCell="A1" sqref="A1:B2"\/>/);
+
+  sheet.clearSelection();
+  sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.doesNotMatch(sheetXml, /<selection\b/);
+  assert.equal(sheet.getSelection(), null);
 });
 
 test("workbook sheet visibility APIs read and write hidden states", async () => {
@@ -4270,6 +4280,8 @@ test("sheet hyperlink APIs read, write, replace, and delete hyperlinks", async (
   const workbook = Workbook.fromEntries(entries);
   const sheet = workbook.getSheet("Sheet1");
 
+  assert.equal(sheet.getHyperlink("A1"), null);
+
   sheet.setHyperlink("A1", "https://example.com", { text: "Open", tooltip: "Go" });
   sheet.setHyperlink("B2", "#Sheet2!A1");
 
@@ -4277,6 +4289,18 @@ test("sheet hyperlink APIs read, write, replace, and delete hyperlinks", async (
     { address: "A1", target: "https://example.com", tooltip: "Go", type: "external" },
     { address: "B2", target: "#Sheet2!A1", tooltip: null, type: "internal" },
   ]);
+  assert.deepEqual(sheet.getHyperlink("A1"), {
+    address: "A1",
+    target: "https://example.com",
+    tooltip: "Go",
+    type: "external",
+  });
+  assert.deepEqual(sheet.hyperlink("B2"), {
+    address: "B2",
+    target: "#Sheet2!A1",
+    tooltip: null,
+    type: "internal",
+  });
   assert.equal(sheet.getCell("A1"), "Open");
 
   let sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
@@ -4314,11 +4338,12 @@ test("sheet hyperlink APIs read, write, replace, and delete hyperlinks", async (
   sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<hyperlinks><hyperlink ref="B2" location="#Sheet2!A1"\/><\/hyperlinks>/);
 
-  sheet.removeHyperlink("B2");
+  sheet.clearHyperlinks();
 
   sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.doesNotMatch(sheetXml, /<hyperlinks>/);
   assert.deepEqual(sheet.getHyperlinks(), []);
+  assert.equal(sheet.getHyperlink("B2"), null);
 });
 
 test("sheet comment APIs create, update, read, and delete comments", async () => {
@@ -4472,6 +4497,11 @@ test("sheet autoFilter APIs read, write, shift, and remove filters", async () =>
   assert.equal(sheet.getAutoFilter(), null);
   assert.doesNotMatch(sheetXml, /<autoFilter\b/);
   assert.doesNotMatch(sheetXml, /<sortState\b/);
+
+  sheet.setAutoFilter("A1:C2");
+  assert.equal(sheet.getAutoFilter(), "A1:C2");
+  sheet.clearAutoFilter();
+  assert.equal(sheet.getAutoFilter(), null);
 });
 
 test("sheet dataValidation APIs read, write, shift, and remove validations", async () => {
@@ -4491,6 +4521,7 @@ test("sheet dataValidation APIs read, write, shift, and remove validations", asy
   const sheet = workbook.getSheet("Sheet1");
 
   assert.deepEqual(sheet.getDataValidations(), []);
+  assert.equal(sheet.getDataValidation("A2:B4"), null);
 
   sheet.setDataValidation("A2:B4", {
     type: "whole",
@@ -4547,6 +4578,23 @@ test("sheet dataValidation APIs read, write, shift, and remove validations", asy
       formula2: null,
     },
   ]);
+  assert.deepEqual(sheet.getDataValidation("A2:B4"), {
+    range: "A2:B4",
+    type: "whole",
+    operator: "between",
+    allowBlank: true,
+    showInputMessage: null,
+    showErrorMessage: true,
+    showDropDown: null,
+    errorStyle: "stop",
+    errorTitle: "Invalid",
+    error: "Enter 1-10",
+    promptTitle: null,
+    prompt: null,
+    imeMode: null,
+    formula1: "1",
+    formula2: "10",
+  });
 
   let sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.match(sheetXml, /<dataValidations count="2">/);
@@ -4608,6 +4656,14 @@ test("sheet dataValidation APIs read, write, shift, and remove validations", asy
   sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
   assert.deepEqual(sheet.getDataValidations(), []);
   assert.doesNotMatch(sheetXml, /<dataValidations\b/);
+
+  sheet.setDataValidation("C2", {
+    type: "list",
+    formula1: "\"Yes,No\"",
+  });
+  assert.notEqual(sheet.getDataValidation("C2"), null);
+  sheet.clearDataValidations();
+  assert.deepEqual(sheet.getDataValidations(), []);
 });
 
 test("sheet autoFilter and dataValidation APIs tolerate single-quoted worksheet tags", async () => {

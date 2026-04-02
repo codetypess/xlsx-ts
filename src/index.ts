@@ -51,6 +51,8 @@ export type {
   SheetImportRecordsResult,
   SheetSelection,
   SheetPrintTitles,
+  SheetProtection,
+  SheetProtectionOptions,
   SheetUpsertRecordResult,
   SheetVisibility,
   WorkbookCreateOptions,

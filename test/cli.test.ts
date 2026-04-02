@@ -206,6 +206,243 @@ test("rename-sheet and delete-sheet manage worksheets through direct commands", 
   }
 });
 
+test("move-sheet reorders worksheets through the direct CLI command", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeFixtureWorkbook(tempRoot);
+    const withSecondSheetPath = join(tempRoot, "two-sheets.xlsx");
+    const movedPath = join(tempRoot, "moved.xlsx");
+
+    let result = await runCliCapture([
+      "add-sheet",
+      inputPath,
+      "--sheet",
+      "Sheet2",
+      "--output",
+      withSecondSheetPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "move-sheet",
+      withSecondSheetPath,
+      "--sheet",
+      "Sheet2",
+      "--index",
+      "0",
+      "--output",
+      movedPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).sheets, ["Sheet2", "Sheet1"]);
+
+    const workbook = await Workbook.open(movedPath);
+    assert.deepEqual(
+      workbook.getSheets().map((sheet) => sheet.name),
+      ["Sheet2", "Sheet1"],
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("workflow-oriented workbook active and visibility commands manage workbook metadata", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const withSecondSheetPath = join(tempRoot, "two-sheets.xlsx");
+    const activePath = join(tempRoot, "active.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "add-sheet",
+      inputPath,
+      "--sheet",
+      "Sheet2",
+      "--output",
+      withSecondSheetPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "workbook",
+      "active",
+      "set",
+      withSecondSheetPath,
+      "--sheet",
+      "Sheet2",
+      "--output",
+      activePath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).activeSheet, "Sheet2");
+
+    result = await runCliCapture([
+      "workbook",
+      "active",
+      "get",
+      activePath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).activeSheet, "Sheet2");
+
+    result = await runCliCapture([
+      "workbook",
+      "visibility",
+      "set",
+      activePath,
+      "--sheet",
+      "Sheet1",
+      "--visibility",
+      "hidden",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).visibility, "hidden");
+
+    result = await runCliCapture([
+      "workbook",
+      "visibility",
+      "get",
+      activePath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).visibility, "hidden");
+
+    const workbook = await Workbook.open(activePath);
+    assert.equal(workbook.getActiveSheet().name, "Sheet2");
+    assert.equal(workbook.getSheetVisibility("Sheet1"), "hidden");
+    assert.equal(workbook.getSheetVisibility("Sheet2"), "visible");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("workflow-oriented workbook defined-name commands manage global and local names", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const withSecondSheetPath = join(tempRoot, "two-sheets.xlsx");
+    const namesPath = join(tempRoot, "names.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "add-sheet",
+      inputPath,
+      "--sheet",
+      "Sheet2",
+      "--output",
+      withSecondSheetPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "workbook",
+      "defined-name",
+      "set",
+      withSecondSheetPath,
+      "--name",
+      "GlobalValue",
+      "--value",
+      "Sheet1!$A$1",
+      "--output",
+      namesPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).definedName, {
+      hidden: false,
+      name: "GlobalValue",
+      scope: null,
+      value: "Sheet1!$A$1",
+    });
+
+    result = await runCliCapture([
+      "workbook",
+      "defined-name",
+      "set",
+      namesPath,
+      "--name",
+      "LocalValue",
+      "--value",
+      "$B$2",
+      "--scope",
+      "Sheet1",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).definedName, {
+      hidden: false,
+      name: "LocalValue",
+      scope: "Sheet1",
+      value: "$B$2",
+    });
+
+    result = await runCliCapture([
+      "workbook",
+      "defined-name",
+      "list",
+      namesPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).definedNames.length, 2);
+
+    result = await runCliCapture([
+      "workbook",
+      "defined-name",
+      "get",
+      namesPath,
+      "--name",
+      "LocalValue",
+      "--scope",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).definedName, {
+      hidden: false,
+      name: "LocalValue",
+      scope: "Sheet1",
+      value: "$B$2",
+    });
+
+    result = await runCliCapture([
+      "workbook",
+      "defined-name",
+      "delete",
+      namesPath,
+      "--name",
+      "GlobalValue",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).deleted, true);
+
+    const workbook = await Workbook.open(namesPath);
+    assert.equal(workbook.getDefinedName("GlobalValue"), null);
+    assert.equal(workbook.getDefinedName("LocalValue", "Sheet1"), "$B$2");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("record commands manage header-based sheet data through the CLI", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 
@@ -430,6 +667,23 @@ test("workflow-oriented sheet commands handle import/export and comments", async
     result = await runCliCapture([
       "sheet",
       "comment",
+      "list",
+      commentedPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).comments, [
+      {
+        address: "B2",
+        author: "Alice",
+        text: "Note",
+      },
+    ]);
+
+    result = await runCliCapture([
+      "sheet",
+      "comment",
       "get",
       commentedPath,
       "--sheet",
@@ -447,16 +701,14 @@ test("workflow-oriented sheet commands handle import/export and comments", async
     result = await runCliCapture([
       "sheet",
       "comment",
-      "delete",
+      "clear",
       commentedPath,
       "--sheet",
       "Sheet1",
-      "--cell",
-      "B2",
       "--in-place",
     ]);
     assert.equal(result.exitCode, 0);
-    assert.equal(JSON.parse(result.stdout).deleted, true);
+    assert.equal(JSON.parse(result.stdout).cleared, 1);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -630,6 +882,73 @@ test("workflow-oriented sheet record upsert command inserts and updates by key",
   }
 });
 
+test("workflow-oriented sheet record list, append, and replace commands manage record sets", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const appendedPath = join(tempRoot, "appended.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "records",
+      "append",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--records",
+      '[{"id":1001,"name":"Alpha"},{"id":1002,"name":"Beta"}]',
+      "--output",
+      appendedPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).appended, 2);
+
+    result = await runCliCapture([
+      "sheet",
+      "records",
+      "list",
+      appendedPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).records, [
+      { id: 1001, name: "Alpha" },
+      { id: 1002, name: "Beta" },
+    ]);
+
+    result = await runCliCapture([
+      "sheet",
+      "records",
+      "replace",
+      appendedPath,
+      "--sheet",
+      "Sheet1",
+      "--record",
+      '{"id":2001,"name":"Gamma"}',
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).replaced, 1);
+
+    const workbook = await Workbook.open(appendedPath);
+    assert.deepEqual(workbook.getSheet("Sheet1").getRecords(), [
+      { id: 2001, name: "Gamma" },
+    ]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("workflow-oriented sheet layout command updates widths, heights, freeze, and print settings", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 
@@ -704,6 +1023,432 @@ test("workflow-oriented sheet layout command updates widths, heights, freeze, an
     assert.deepEqual(inspected.columnWidths, { A: 12, B: 24 });
     assert.deepEqual(inspected.rowHeights, { "1": 22 });
     assert.equal(inspected.printArea, "A1:B20");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("workflow-oriented sheet protection commands read, write, and clear protection", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const outputPath = join(tempRoot, "protected.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "protection",
+      "set",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--sort",
+      "--auto-filter",
+      "--format-cells",
+      "--delete-rows",
+      "--pivot-tables",
+      "--password-hash",
+      "ABCD",
+      "--output",
+      outputPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).protection.passwordHash, "ABCD");
+
+    result = await runCliCapture([
+      "sheet",
+      "protection",
+      "get",
+      outputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    const protection = JSON.parse(result.stdout).protection;
+    assert.equal(protection.sheet, true);
+    assert.equal(protection.sort, true);
+    assert.equal(protection.autoFilter, true);
+    assert.equal(protection.formatCells, true);
+    assert.equal(protection.deleteRows, true);
+    assert.equal(protection.pivotTables, true);
+
+    result = await runCliCapture([
+      "sheet",
+      "protection",
+      "clear",
+      outputPath,
+      "--sheet",
+      "Sheet1",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).protection, null);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("workflow-oriented sheet hyperlink and filter commands manage metadata", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const linkedPath = join(tempRoot, "linked.xlsx");
+    const filteredPath = join(tempRoot, "filtered.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "hyperlink",
+      "set",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--cell",
+      "A1",
+      "--target",
+      "https://example.com",
+      "--text",
+      "Open",
+      "--tooltip",
+      "Go",
+      "--output",
+      linkedPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).hyperlink, {
+      address: "A1",
+      target: "https://example.com",
+      tooltip: "Go",
+      type: "external",
+    });
+
+    result = await runCliCapture([
+      "sheet",
+      "hyperlink",
+      "list",
+      linkedPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).hyperlinks, [
+      {
+        address: "A1",
+        target: "https://example.com",
+        tooltip: "Go",
+        type: "external",
+      },
+    ]);
+
+    result = await runCliCapture([
+      "sheet",
+      "hyperlink",
+      "get",
+      linkedPath,
+      "--sheet",
+      "Sheet1",
+      "--cell",
+      "A1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).hyperlink.target, "https://example.com");
+
+    result = await runCliCapture([
+      "sheet",
+      "filter",
+      "set",
+      linkedPath,
+      "--sheet",
+      "Sheet1",
+      "--range",
+      "A1:B3",
+      "--output",
+      filteredPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).autoFilter, "A1:B3");
+
+    result = await runCliCapture([
+      "sheet",
+      "filter",
+      "get",
+      filteredPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).autoFilter, "A1:B3");
+
+    result = await runCliCapture([
+      "sheet",
+      "hyperlink",
+      "clear",
+      filteredPath,
+      "--sheet",
+      "Sheet1",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).cleared, 1);
+
+    result = await runCliCapture([
+      "sheet",
+      "filter",
+      "clear",
+      filteredPath,
+      "--sheet",
+      "Sheet1",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).autoFilter, null);
+
+    const workbook = await Workbook.open(filteredPath);
+    const sheet = workbook.getSheet("Sheet1");
+    assert.equal(sheet.getHyperlinks().length, 0);
+    assert.equal(sheet.getAutoFilter(), null);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("workflow-oriented sheet selection and validation commands manage view metadata", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const selectedPath = join(tempRoot, "selected.xlsx");
+    const validatedPath = join(tempRoot, "validated.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "selection",
+      "set",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--active-cell",
+      "C3",
+      "--range",
+      "C3:D4",
+      "--output",
+      selectedPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).selection, {
+      activeCell: "C3",
+      pane: null,
+      range: "C3:D4",
+    });
+
+    result = await runCliCapture([
+      "sheet",
+      "selection",
+      "get",
+      selectedPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).selection.activeCell, "C3");
+
+    result = await runCliCapture([
+      "sheet",
+      "validation",
+      "set",
+      selectedPath,
+      "--sheet",
+      "Sheet1",
+      "--range",
+      "A2:A10",
+      "--type",
+      "whole",
+      "--operator",
+      "between",
+      "--allow-blank",
+      "true",
+      "--show-error-message",
+      "true",
+      "--error-title",
+      "Invalid",
+      "--error",
+      "Use 1-10",
+      "--formula1",
+      "1",
+      "--formula2",
+      "10",
+      "--output",
+      validatedPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).validation.range, "A2:A10");
+
+    result = await runCliCapture([
+      "sheet",
+      "validation",
+      "list",
+      validatedPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).validations.length, 1);
+
+    result = await runCliCapture([
+      "sheet",
+      "validation",
+      "get",
+      validatedPath,
+      "--sheet",
+      "Sheet1",
+      "--range",
+      "A2:A10",
+    ]);
+    assert.equal(result.exitCode, 0);
+    const validation = JSON.parse(result.stdout).validation;
+    assert.equal(validation.type, "whole");
+    assert.equal(validation.formula1, "1");
+    assert.equal(validation.formula2, "10");
+
+    result = await runCliCapture([
+      "sheet",
+      "selection",
+      "clear",
+      validatedPath,
+      "--sheet",
+      "Sheet1",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).selection, null);
+
+    result = await runCliCapture([
+      "sheet",
+      "validation",
+      "clear",
+      validatedPath,
+      "--sheet",
+      "Sheet1",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).cleared, 1);
+
+    const workbook = await Workbook.open(validatedPath);
+    const sheet = workbook.getSheet("Sheet1");
+    assert.equal(sheet.getSelection(), null);
+    assert.deepEqual(sheet.getDataValidations(), []);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("workflow-oriented sheet merge commands manage merged ranges", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const mergedPath = join(tempRoot, "merged.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "merge",
+      "add",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--range",
+      "B2:A1",
+      "--output",
+      mergedPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).mergedRanges, ["A1:B2"]);
+
+    result = await runCliCapture([
+      "sheet",
+      "merge",
+      "list",
+      mergedPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).mergedRanges, ["A1:B2"]);
+
+    result = await runCliCapture([
+      "sheet",
+      "merge",
+      "remove",
+      mergedPath,
+      "--sheet",
+      "Sheet1",
+      "--range",
+      "A1:B2",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).deleted, true);
+
+    result = await runCliCapture([
+      "sheet",
+      "merge",
+      "add",
+      mergedPath,
+      "--sheet",
+      "Sheet1",
+      "--range",
+      "C3:D4",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "merge",
+      "clear",
+      mergedPath,
+      "--sheet",
+      "Sheet1",
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(result.stdout).cleared, 1);
+
+    const workbook = await Workbook.open(mergedPath);
+    assert.deepEqual(workbook.getSheet("Sheet1").getMergedRanges(), []);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

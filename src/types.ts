@@ -318,6 +318,45 @@ export interface SheetPrintTitles {
   rows: string | null;
 }
 
+export interface SheetProtection {
+  autoFilter: boolean | null;
+  deleteColumns: boolean | null;
+  deleteRows: boolean | null;
+  formatCells: boolean | null;
+  formatColumns: boolean | null;
+  formatRows: boolean | null;
+  insertColumns: boolean | null;
+  insertHyperlinks: boolean | null;
+  insertRows: boolean | null;
+  objects: boolean | null;
+  passwordHash: string | null;
+  pivotTables: boolean | null;
+  scenarios: boolean | null;
+  selectLockedCells: boolean | null;
+  selectUnlockedCells: boolean | null;
+  sheet: boolean;
+  sort: boolean | null;
+}
+
+export interface SheetProtectionOptions {
+  autoFilter?: boolean;
+  deleteColumns?: boolean;
+  deleteRows?: boolean;
+  formatCells?: boolean;
+  formatColumns?: boolean;
+  formatRows?: boolean;
+  insertColumns?: boolean;
+  insertHyperlinks?: boolean;
+  insertRows?: boolean;
+  objects?: boolean;
+  passwordHash?: string;
+  pivotTables?: boolean;
+  scenarios?: boolean;
+  selectLockedCells?: boolean;
+  selectUnlockedCells?: boolean;
+  sort?: boolean;
+}
+
 export interface SheetComment {
   address: string;
   author: string | null;
