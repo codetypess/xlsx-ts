@@ -3,8 +3,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { Command } from "commander";
 
 import {
+  assertRecord,
   parseJsonCellRecord,
   parseJsonCellRecordArray,
+  parseJsonDocument,
   parseJsonStringArray,
   writeJson,
 } from "./cli-json.js";
@@ -141,6 +143,98 @@ export function registerRecordCommands(
   const sheetRecordsCommand = sheetCommand
     .command("records")
     .description("Workflow-oriented sheet record commands");
+
+  const layoutCommand = sheetCommand
+    .command("layout")
+    .description("Workflow-oriented sheet layout commands");
+
+  layoutCommand
+    .command("set")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--column-widths <json>", "JSON object mapping column labels to widths")
+    .option("--row-heights <json>", "JSON object mapping row numbers to heights")
+    .option("--freeze-columns <count>", "number of frozen columns", parsePositiveInteger)
+    .option("--freeze-rows <count>", "number of frozen rows", parsePositiveInteger)
+    .option("--clear-freeze", "remove frozen panes")
+    .option("--print-area <range>", "print area range")
+    .option("--clear-print-area", "remove print area")
+    .option("--print-title-rows <range>", "print title rows, such as 1:1")
+    .option("--print-title-columns <range>", "print title columns, such as A:B")
+    .option("--clear-print-titles", "remove print titles")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          clearFreeze?: boolean;
+          clearPrintArea?: boolean;
+          clearPrintTitles?: boolean;
+          columnWidths?: string;
+          freezeColumns?: number;
+          freezeRows?: number;
+          inPlace?: boolean;
+          output?: string;
+          printArea?: string;
+          printTitleColumns?: string;
+          printTitleRows?: string;
+          rowHeights?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+
+        if (options.columnWidths) {
+          for (const [column, width] of Object.entries(parseWorksheetNumberMap(options.columnWidths, "--column-widths"))) {
+            sheet.setColumnWidth(column, width);
+          }
+        }
+        if (options.rowHeights) {
+          for (const [rowNumberText, height] of Object.entries(parseWorksheetNumberMap(options.rowHeights, "--row-heights"))) {
+            sheet.setRowHeight(Number(rowNumberText), height);
+          }
+        }
+
+        if (options.clearFreeze) {
+          sheet.unfreezePane();
+        } else if (options.freezeColumns !== undefined || options.freezeRows !== undefined) {
+          sheet.freezePane(options.freezeColumns ?? 0, options.freezeRows ?? 0);
+        }
+
+        if (options.clearPrintArea) {
+          sheet.setPrintArea(null);
+        } else if (options.printArea !== undefined) {
+          sheet.setPrintArea(options.printArea);
+        }
+
+        if (options.clearPrintTitles) {
+          sheet.setPrintTitles({ columns: null, rows: null });
+        } else if (options.printTitleColumns !== undefined || options.printTitleRows !== undefined) {
+          sheet.setPrintTitles({
+            columns: options.printTitleColumns,
+            rows: options.printTitleRows,
+          });
+        }
+
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.layout.set",
+          freezePane: sheet.getFreezePane(),
+          input: inputPath,
+          output: outputPath,
+          printArea: sheet.getPrintArea(),
+          printTitles: sheet.getPrintTitles(),
+          sheet: options.sheet,
+        });
+      },
+    );
 
   sheetRecordsCommand
     .command("upsert")
@@ -653,6 +747,26 @@ function parseCsvAsRecords(source: string): CellRecord[] {
   const sheet = workbook.getSheet("Sheet1");
   sheet.fromCsv(source, 1);
   return sheet.toJson() as CellRecord[];
+}
+
+function parseWorksheetNumberMap(source: string, label: string): Record<string, number | null> {
+  const record = assertRecord(parseJsonDocument(source, label), label);
+  const next: Record<string, number | null> = {};
+
+  for (const [key, value] of Object.entries(record)) {
+    if (value === null) {
+      next[key] = null;
+      continue;
+    }
+
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      throw new Error(`Expected ${label}.${key} to be a positive number or null`);
+    }
+
+    next[key] = value;
+  }
+
+  return next;
 }
 
 async function getRecords(

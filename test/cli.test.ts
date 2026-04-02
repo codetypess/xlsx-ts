@@ -528,6 +528,67 @@ test("workflow-oriented sheet record upsert command inserts and updates by key",
   }
 });
 
+test("workflow-oriented sheet layout command updates widths, heights, freeze, and print settings", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const outputPath = join(tempRoot, "layout.xlsx");
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "layout",
+      "set",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--column-widths",
+      '{"A":12,"B":24}',
+      "--row-heights",
+      '{"1":22}',
+      "--freeze-columns",
+      "1",
+      "--freeze-rows",
+      "1",
+      "--print-area",
+      "A1:B20",
+      "--print-title-rows",
+      "1:1",
+      "--output",
+      outputPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.printArea, "A1:B20");
+    assert.deepEqual(payload.printTitles, { columns: null, rows: "$1:$1" });
+    assert.deepEqual(payload.freezePane, {
+      activePane: "bottomRight",
+      columnCount: 1,
+      rowCount: 1,
+      topLeftCell: "B2",
+    });
+
+    const workbook = await Workbook.open(outputPath);
+    const sheet = workbook.getSheet("Sheet1");
+    assert.equal(sheet.getColumnWidth("A"), 12);
+    assert.equal(sheet.getColumnWidth("B"), 24);
+    assert.equal(sheet.getRowHeight(1), 22);
+    assert.equal(sheet.getPrintArea(), "A1:B20");
+    assert.deepEqual(sheet.getPrintTitles(), { columns: null, rows: "$1:$1" });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("add-record initializes headers on a newly created workbook", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 
