@@ -2158,6 +2158,34 @@ test("table generate-profiles can scan directories recursively and ignore files"
   }
 });
 
+test("table generate-profiles skips temporary workbook files during directory scans", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeProfileGenerationWorkbook(tempRoot);
+    await writeFile(join(tempRoot, "~$input.xlsx"), "not a real workbook");
+    await writeFile(join(tempRoot, "~scratch.xlsx"), "not a real workbook");
+
+    const result = await runCliCapture([
+      "table",
+      "generate-profiles",
+      "--from-dir",
+      tempRoot,
+    ]);
+
+    assert.equal(result.exitCode, 0);
+
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.files, [inputPath]);
+    assert.deepEqual(payload.profileNames, [
+      "input#Sheet1",
+      "input#Config Values",
+    ]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("table generate-profiles infers composite keys from key1/key2 headers", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 

@@ -774,12 +774,16 @@ async function collectXlsxFilesFromDirectory(directoryPath: string): Promise<str
       continue;
     }
 
-    if (entry.isFile() && extname(entry.name).toLowerCase() === ".xlsx") {
+    if (entry.isFile() && isProfileWorkbookFile(entry.name)) {
       next.push(entryPath);
     }
   }
 
   return next;
+}
+
+function isProfileWorkbookFile(fileName: string): boolean {
+  return extname(fileName).toLowerCase() === ".xlsx" && !fileName.startsWith("~");
 }
 
 function parseNewlineDelimitedPaths(source: string): string[] {
