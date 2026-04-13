@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { extname, join } from "node:path";
 
 import { Command, InvalidArgumentError } from "commander";
 
@@ -361,18 +362,28 @@ export function registerTableCommands(
 
   table
     .command("generate-profiles")
-    .argument("<files...>", "input xlsx files")
+    .argument("[files...]", "input xlsx files")
+    .option("--files-from <file>", "read input xlsx file paths from a newline-delimited file")
+    .option("--from-dir <directory>", "recursively read input xlsx files from a directory", collectRepeatedStrings)
+    .option("--ignore <file>", "input xlsx file path to ignore; can be repeated", collectRepeatedStrings)
     .option("--sheet-filter <regex>", "regular expression used to select sheet names", parseRegex)
     .option("--output <file>", "write generated profiles JSON to a file")
     .action(
       async (
         files: string[],
         options: {
+          filesFrom?: string;
+          fromDir?: string[];
+          ignore?: string[];
           output?: string;
           sheetFilter?: RegExp;
         },
       ) => {
-        const inputPaths = files.map((file) => resolveFrom(io.cwd, file));
+        const inputPaths = await resolveGenerateProfileInputPaths(io.cwd, files, {
+          filesFrom: options.filesFrom,
+          fromDirs: options.fromDir ?? [],
+          ignoredFiles: options.ignore ?? [],
+        });
         const result = await generateTableProfiles(inputPaths, {
           sheetFilter: options.sheetFilter,
         });
@@ -714,6 +725,65 @@ function parseRegex(value: string): RegExp {
   } catch (error) {
     throw new InvalidArgumentError(`Expected a valid regular expression, got: ${value}; ${formatError(error)}`);
   }
+}
+
+async function resolveGenerateProfileInputPaths(
+  cwd: string,
+  files: string[],
+  options: {
+    filesFrom?: string;
+    fromDirs: string[];
+    ignoredFiles: string[];
+  },
+): Promise<string[]> {
+  const inputFiles = [...files];
+
+  if (options.filesFrom) {
+    const fileListPath = resolveFrom(cwd, options.filesFrom);
+    const fileList = await readFile(fileListPath, "utf8");
+    inputFiles.push(...parseNewlineDelimitedPaths(fileList));
+  }
+
+  for (const directory of options.fromDirs) {
+    inputFiles.push(...await collectXlsxFilesFromDirectory(resolveFrom(cwd, directory)));
+  }
+
+  const ignoredPaths = new Set(options.ignoredFiles.map((file) => resolveFrom(cwd, file)));
+  const inputPaths = inputFiles
+    .map((file) => resolveFrom(cwd, file))
+    .filter((file) => !ignoredPaths.has(file));
+
+  if (inputPaths.length === 0) {
+    throw new Error("Missing input xlsx files; pass files, --files-from, or --from-dir");
+  }
+
+  return inputPaths;
+}
+
+async function collectXlsxFilesFromDirectory(directoryPath: string): Promise<string[]> {
+  const next: string[] = [];
+  const entries = await readdir(directoryPath, { withFileTypes: true });
+
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of entries) {
+    const entryPath = join(directoryPath, entry.name);
+
+    if (entry.isDirectory()) {
+      next.push(...await collectXlsxFilesFromDirectory(entryPath));
+      continue;
+    }
+
+    if (entry.isFile() && extname(entry.name).toLowerCase() === ".xlsx") {
+      next.push(entryPath);
+    }
+  }
+
+  return next;
+}
+
+function parseNewlineDelimitedPaths(source: string): string[] {
+  return source.split(/\r?\n|\r/u).filter((line) => line.trim().length > 0);
 }
 
 function getOrCreateSheet(workbook: Workbook, sheetName: string) {

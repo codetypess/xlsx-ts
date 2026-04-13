@@ -1,6 +1,6 @@
 {
   "name": "fastxlsx",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A lossless-first XLSX reader/writer prototype that preserves styles and untouched package parts.",
   "type": "module",
   "license": "MIT",

@@ -2097,6 +2097,67 @@ test("table generate-profiles scans full workbooks and supports multiple xlsx in
   }
 });
 
+test("table generate-profiles can read xlsx inputs from a file list", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeProfileGenerationWorkbook(tempRoot);
+    const secondInputPath = await writeCompositeStructuredTableWorkbook(join(tempRoot, "second"), "define.xlsx");
+    const filesPath = join(tempRoot, "xlsx-files.txt");
+    await writeFile(filesPath, `${inputPath}\n${secondInputPath}\n`);
+
+    const result = await runCliCapture([
+      "table",
+      "generate-profiles",
+      "--files-from",
+      filesPath,
+    ]);
+
+    assert.equal(result.exitCode, 0);
+
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.files, [inputPath, secondInputPath]);
+    assert.deepEqual(payload.profileNames, [
+      "input#Sheet1",
+      "input#Config Values",
+      "define#Sheet1",
+    ]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("table generate-profiles can scan directories recursively and ignore files", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = await writeProfileGenerationWorkbook(tempRoot);
+    const secondInputPath = await writeCompositeStructuredTableWorkbook(join(tempRoot, "second"), "define.xlsx");
+    const ignoredInputPath = await writeCompositeStructuredTableWorkbook(join(tempRoot, "ignored"), "ignored.xlsx");
+
+    const result = await runCliCapture([
+      "table",
+      "generate-profiles",
+      "--from-dir",
+      tempRoot,
+      "--ignore",
+      ignoredInputPath,
+    ]);
+
+    assert.equal(result.exitCode, 0);
+
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.files, [inputPath, secondInputPath]);
+    assert.deepEqual(payload.profileNames, [
+      "input#Sheet1",
+      "input#Config Values",
+      "define#Sheet1",
+    ]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("table generate-profiles infers composite keys from key1/key2 headers", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 
