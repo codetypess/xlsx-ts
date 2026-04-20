@@ -1092,7 +1092,7 @@ function matchesSheetReference(sheetRef: string | undefined, targetSheetName: st
       ? rawSheetName.slice(1, -1).replaceAll("''", "'")
       : rawSheetName;
 
-  return normalizedSheetName === targetSheetName;
+  return normalizeSheetNameKey(normalizedSheetName) === normalizeSheetNameKey(targetSheetName);
 }
 
 function renameSheetReferencePrefix(
@@ -1113,4 +1113,8 @@ function formatSheetReference(sheetName: string): string {
   }
 
   return `'${sheetName.replaceAll("'", "''")}'`;
+}
+
+function normalizeSheetNameKey(sheetName: string): string {
+  return sheetName.toUpperCase();
 }

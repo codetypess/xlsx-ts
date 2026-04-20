@@ -4,6 +4,19 @@ import { renameHyperlinkLocation } from "./workbook-sheet-package.js";
 import { rewriteXmlTagsByName } from "./workbook-xml.js";
 import { decodeXmlText, escapeXmlText, parseAttributes, serializeAttributes } from "../utils/xml.js";
 
+export function normalizeSheetNameKey(sheetName: string): string {
+  return sheetName.toUpperCase();
+}
+
+export function sheetNamesEqual(left: string, right: string): boolean {
+  return normalizeSheetNameKey(left) === normalizeSheetNameKey(right);
+}
+
+export function findSheetIndexByName(sheets: Sheet[], sheetName: string): number {
+  const normalizedSheetName = normalizeSheetNameKey(sheetName);
+  return sheets.findIndex((candidate) => normalizeSheetNameKey(candidate.name) === normalizedSheetName);
+}
+
 export function requireSheetByName(sheets: Sheet[], sheetName: string): Sheet {
   const sheet = findSheetByName(sheets, sheetName);
   if (!sheet) {
@@ -14,7 +27,8 @@ export function requireSheetByName(sheets: Sheet[], sheetName: string): Sheet {
 }
 
 export function findSheetByName(sheets: Sheet[], sheetName: string): Sheet | null {
-  return sheets.find((candidate) => candidate.name === sheetName) ?? null;
+  const sheetIndex = findSheetIndexByName(sheets, sheetName);
+  return sheetIndex === -1 ? null : sheets[sheetIndex] ?? null;
 }
 
 export function resolveLocalSheetId(sheets: Sheet[], scope: string | null): number | null {
@@ -22,7 +36,7 @@ export function resolveLocalSheetId(sheets: Sheet[], scope: string | null): numb
     return null;
   }
 
-  const localSheetId = sheets.findIndex((sheet) => sheet.name === scope);
+  const localSheetId = findSheetIndexByName(sheets, scope);
   if (localSheetId === -1) {
     throw new XlsxError(`Sheet not found: ${scope}`);
   }

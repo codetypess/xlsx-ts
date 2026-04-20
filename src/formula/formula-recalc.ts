@@ -15,6 +15,7 @@ import {
 } from "../sheet/sheet-address.js";
 import { buildSheetIndex } from "../sheet/sheet-index.js";
 import { parseFormulaTagInfo } from "../sheet/sheet-formula-xml.js";
+import { normalizeSheetNameKey } from "../workbook/workbook-sheet-helpers.js";
 
 const FORMULA_ERROR_CODES: Record<string, number> = {
   "#NULL!": 0x00,
@@ -299,20 +300,21 @@ class FormulaRuntime {
 
   constructor(private readonly workbook: Workbook) {
     for (const sheet of workbook.getSheets()) {
-      this.sheets.set(sheet.name, sheet);
+      this.sheets.set(normalizeSheetNameKey(sheet.name), sheet);
     }
   }
 
   evaluateFormulaCell(sheetName: string, address: string): ScalarValue {
-    const key = makeFormulaKey(sheetName, address);
+    const resolvedSheetName = this.resolveSheetName(sheetName);
+    const key = makeFormulaKey(resolvedSheetName, address);
     const cached = this.formulaResults.get(key);
     if (cached) {
       return cached;
     }
 
-    const definition = this.getFormulaCellDefinition(sheetName, address);
+    const definition = this.getFormulaCellDefinition(resolvedSheetName, address);
     if (!definition) {
-      return scalarFromSnapshot(this.requireSheet(sheetName).readCellSnapshot(address));
+      return scalarFromSnapshot(this.requireSheet(resolvedSheetName).readCellSnapshot(address));
     }
 
     if (definition.formulaAttributesSource.length > 0) {
@@ -333,9 +335,10 @@ class FormulaRuntime {
   }
 
   evaluateExpression(expression: string, currentSheetName: string): EvaluatedValue {
+    const resolvedSheetName = this.resolveSheetName(currentSheetName);
     const normalized = expression.startsWith("=") ? expression.slice(1) : expression;
     const ast = this.getParsedAst(normalized);
-    return this.evaluateNode(ast, currentSheetName);
+    return this.evaluateNode(ast, resolvedSheetName);
   }
 
   getFormulaResults(): Map<string, ScalarValue> {
@@ -343,7 +346,7 @@ class FormulaRuntime {
   }
 
   listFormulaAddresses(sheetName: string): string[] {
-    return [...this.getFormulaCellsForSheet(sheetName).keys()];
+    return [...this.getFormulaCellsForSheet(this.resolveSheetName(sheetName)).keys()];
   }
 
   private enterStack(key: string, message: string): void {
@@ -671,23 +674,28 @@ class FormulaRuntime {
   }
 
   private readCellValue(sheetName: string, address: string): ScalarValue {
+    const resolvedSheetName = this.resolveSheetName(sheetName);
     const normalizedAddress = normalizeCellAddress(address);
-    const sheet = this.requireSheet(sheetName);
+    const sheet = this.requireSheet(resolvedSheetName);
     const snapshot = sheet.readCellSnapshot(normalizedAddress);
     if (snapshot.formula !== null) {
-      return this.evaluateFormulaCell(sheetName, normalizedAddress);
+      return this.evaluateFormulaCell(resolvedSheetName, normalizedAddress);
     }
 
     return scalarFromSnapshot(snapshot);
   }
 
   private requireSheet(sheetName: string): Sheet {
-    const sheet = this.sheets.get(sheetName);
+    const sheet = this.sheets.get(normalizeSheetNameKey(sheetName));
     if (!sheet) {
       throw new XlsxError(`Sheet not found during formula evaluation: ${sheetName}`);
     }
 
     return sheet;
+  }
+
+  private resolveSheetName(sheetName: string): string {
+    return this.requireSheet(sheetName).name;
   }
 }
 

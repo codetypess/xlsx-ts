@@ -958,7 +958,7 @@ function parseNewlineDelimitedPaths(source: string): string[] {
 }
 
 function getOrCreateSheet(workbook: Workbook, sheetName: string) {
-  const existingSheet = workbook.getSheets().find((sheet) => sheet.name === sheetName);
+  const existingSheet = workbook.tryGetSheet(sheetName);
   return existingSheet ?? workbook.addSheet(sheetName);
 }
 

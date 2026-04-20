@@ -190,8 +190,9 @@ export function registerWorkbookCommands(
     .action(async (file: string, options: { scope?: string }) => {
       const inputPath = resolveFrom(io.cwd, file);
       const workbook = await Workbook.open(inputPath);
+      const normalizedScope = options.scope ? (workbook.tryGetSheet(options.scope)?.name ?? options.scope) : undefined;
       const definedNames = options.scope
-        ? workbook.getDefinedNames().filter((definedName) => definedName.scope === options.scope)
+        ? workbook.getDefinedNames().filter((definedName) => definedName.scope === (normalizedScope ?? null))
         : workbook.getDefinedNames();
       writeJson(io.stdout, {
         definedNames,
@@ -207,8 +208,9 @@ export function registerWorkbookCommands(
     .action(async (file: string, options: { name: string; scope?: string }) => {
       const inputPath = resolveFrom(io.cwd, file);
       const workbook = await Workbook.open(inputPath);
+      const normalizedScope = options.scope ? (workbook.tryGetSheet(options.scope)?.name ?? options.scope) : null;
       const definedName = workbook.getDefinedNames().find(
-        (candidate) => candidate.name === options.name && candidate.scope === (options.scope ?? null),
+        (candidate) => candidate.name === options.name && candidate.scope === normalizedScope,
       ) ?? null;
       writeJson(io.stdout, {
         definedName,
@@ -245,8 +247,9 @@ export function registerWorkbookCommands(
           scope: options.scope,
         });
         await workbook.save(outputPath);
+        const normalizedScope = options.scope ? (workbook.tryGetSheet(options.scope)?.name ?? options.scope) : null;
         const definedName = workbook.getDefinedNames().find(
-          (candidate) => candidate.name === options.name && candidate.scope === (options.scope ?? null),
+          (candidate) => candidate.name === options.name && candidate.scope === normalizedScope,
         ) ?? null;
         writeJson(io.stdout, {
           action: "workbook.definedName.set",

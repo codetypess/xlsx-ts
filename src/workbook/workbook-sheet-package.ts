@@ -28,7 +28,7 @@ export function renameHyperlinkLocation(
       ? sheetToken.slice(1, -1).replaceAll("''", "'")
       : sheetToken;
 
-  if (normalizedSheetName !== currentSheetName) {
+  if (normalizeSheetNameKey(normalizedSheetName) !== normalizeSheetNameKey(currentSheetName)) {
     return location;
   }
 
@@ -106,4 +106,8 @@ function replaceXmlTagSource(xml: string, source: string, nextSource: string): s
   }
 
   return xml.slice(0, index) + nextSource + xml.slice(index + source.length);
+}
+
+function normalizeSheetNameKey(sheetName: string): string {
+  return sheetName.toUpperCase();
 }

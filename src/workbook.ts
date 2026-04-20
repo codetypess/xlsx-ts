@@ -71,11 +71,13 @@ import {
 } from "./workbook/workbook-sheet-package.js";
 import {
   countVisibleSheets,
+  findSheetIndexByName,
   findSheetByName,
   requireSheetByName,
   resolveLocalSheetId,
   rewriteFormulaXml,
   rewriteHyperlinkLocationXml,
+  sheetNamesEqual,
 } from "./workbook/workbook-sheet-helpers.js";
 import {
   assertCellBorderPatch,
@@ -809,7 +811,7 @@ export class Workbook {
    */
   setActiveSheet(sheetName: string): Sheet {
     const context = this.getWorkbookContext();
-    const targetIndex = context.sheets.findIndex((sheet) => sheet.name === sheetName);
+    const targetIndex = findSheetIndexByName(context.sheets, sheetName);
     if (targetIndex === -1) {
       throw new XlsxError(`Sheet not found: ${sheetName}`);
     }
@@ -878,8 +880,10 @@ export class Workbook {
    * Reads one defined name value by name and optional sheet scope.
    */
   getDefinedName(name: string, scope?: string): string | null {
+    const normalizedScope =
+      scope === undefined ? null : (findSheetByName(this.getWorkbookContext().sheets, scope)?.name ?? scope);
     const definedName = this.getDefinedNames().find(
-      (candidate) => candidate.name === name && candidate.scope === (scope ?? null),
+      (candidate) => candidate.name === name && candidate.scope === normalizedScope,
     );
     return definedName?.value ?? null;
   }
@@ -938,29 +942,31 @@ export class Workbook {
 
     const context = this.getWorkbookContext();
     const renamedSheet = requireSheetByName(context.sheets, currentSheetName);
+    const currentResolvedSheetName = renamedSheet.name;
 
     if (currentSheetName === nextSheetName) {
       return renamedSheet;
     }
 
-    if (context.sheets.some((sheet) => sheet.name === nextSheetName)) {
+    const existingSheet = findSheetByName(context.sheets, nextSheetName);
+    if (existingSheet && existingSheet.relationshipId !== renamedSheet.relationshipId) {
       throw new XlsxError(`Sheet already exists: ${nextSheetName}`);
     }
 
     for (const sheet of context.sheets) {
       this.rewriteSheetFormulaTexts(sheet.path, (formula) =>
-        renameSheetFormulaReferences(formula, currentSheetName, nextSheetName),
+        renameSheetFormulaReferences(formula, currentResolvedSheetName, nextSheetName),
       );
-      this.rewriteSheetHyperlinkLocations(sheet.path, currentSheetName, nextSheetName);
+      this.rewriteSheetHyperlinkLocations(sheet.path, currentResolvedSheetName, nextSheetName);
     }
 
     const workbookXml = this.readEntryText(context.workbookPath);
     this.writeEntryText(
       context.workbookPath,
-      renameSheetInWorkbookXml(workbookXml, renamedSheet.relationshipId, currentSheetName, nextSheetName),
+      renameSheetInWorkbookXml(workbookXml, renamedSheet.relationshipId, currentResolvedSheetName, nextSheetName),
     );
     this.rewriteAppSheetNames(
-      context.sheets.map((sheet) => (sheet.name === currentSheetName ? nextSheetName : sheet.name)),
+      context.sheets.map((sheet) => (sheet.relationshipId === renamedSheet.relationshipId ? nextSheetName : sheet.name)),
     );
     renamedSheet.name = nextSheetName;
     return renamedSheet;
@@ -971,7 +977,7 @@ export class Workbook {
    */
   moveSheet(sheetName: string, targetIndex: number): Sheet {
     const context = this.getWorkbookContext();
-    const sourceIndex = context.sheets.findIndex((sheet) => sheet.name === sheetName);
+    const sourceIndex = findSheetIndexByName(context.sheets, sheetName);
     requireSheetByName(context.sheets, sheetName);
 
     assertSheetIndex(targetIndex, context.sheets.length);
@@ -1000,7 +1006,7 @@ export class Workbook {
     assertSheetName(sheetName);
 
     const context = this.getWorkbookContext();
-    if (context.sheets.some((sheet) => sheet.name === sheetName)) {
+    if (findSheetByName(context.sheets, sheetName)) {
       throw new XlsxError(`Sheet already exists: ${sheetName}`);
     }
 
@@ -1053,11 +1059,9 @@ export class Workbook {
       throw new XlsxError("Cannot delete the last sheet");
     }
 
-    const deletedSheetIndex = context.sheets.findIndex((sheet) => sheet.name === sheetName);
-    requireSheetByName(context.sheets, sheetName);
-
-    const deletedSheet = context.sheets[deletedSheetIndex];
-    if (!deletedSheet) {
+    const deletedSheetIndex = findSheetIndexByName(context.sheets, sheetName);
+    const deletedSheet = requireSheetByName(context.sheets, sheetName);
+    if (deletedSheetIndex === -1) {
       throw new XlsxError(`Sheet not found: ${sheetName}`);
     }
 
@@ -1071,13 +1075,13 @@ export class Workbook {
       }
 
       this.rewriteSheetFormulaTexts(sheet.path, (formula) =>
-        deleteSheetFormulaReferences(formula, sheetName),
+        deleteSheetFormulaReferences(formula, deletedSheet.name),
       );
     }
 
     this.writeEntryText(
       context.workbookPath,
-      removeSheetFromWorkbookXml(workbookXml, deletedSheet.relationshipId, sheetName, deletedSheetIndex),
+      removeSheetFromWorkbookXml(workbookXml, deletedSheet.relationshipId, deletedSheet.name, deletedSheetIndex),
     );
     this.writeEntryText(
       context.workbookRelsPath,
@@ -1088,7 +1092,7 @@ export class Workbook {
       removeContentTypeOverride(contentTypesXml, deletedSheet.path),
     );
     this.rewriteAppSheetNames(
-      context.sheets.filter((sheet) => sheet.name !== sheetName).map((sheet) => sheet.name),
+      context.sheets.filter((sheet) => sheet.relationshipId !== deletedSheet.relationshipId).map((sheet) => sheet.name),
     );
     this.removeEntry(deletedSheet.path);
 
@@ -1201,7 +1205,7 @@ export class Workbook {
     mode: "shift" | "delete",
   ): void {
     const context = this.getWorkbookContext();
-    const localSheetIndex = context.sheets.findIndex((sheet) => sheet.name === sheetName);
+    const localSheetIndex = findSheetIndexByName(context.sheets, sheetName);
     if (localSheetIndex === -1) {
       return;
     }
@@ -1362,7 +1366,13 @@ function normalizeWorkbookCreateSheets(
     const visibility = normalizedSheet.visibility ?? "visible";
     assertSheetVisibility(visibility);
 
-    if (index > 0 && normalizedInput.some((candidate, candidateIndex) => candidateIndex < index && resolveCreateSheetName(candidate) === normalizedSheet.name)) {
+    if (
+      index > 0 &&
+      normalizedInput.some(
+        (candidate, candidateIndex) =>
+          candidateIndex < index && sheetNamesEqual(resolveCreateSheetName(candidate), normalizedSheet.name),
+      )
+    ) {
       throw new XlsxError(`Sheet already exists: ${normalizedSheet.name}`);
     }
 

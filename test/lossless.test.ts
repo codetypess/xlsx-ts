@@ -163,6 +163,37 @@ test("workbook supports ArrayBuffer open flows", async () => {
   assert.equal(reopened.getSheet("Sheet1").getCell("A1"), "Hello");
 });
 
+test("workbook sheet name APIs are case-insensitive like Excel", () => {
+  const workbook = Workbook.create({
+    activeSheet: "summary",
+    sheets: [{ name: "Data" }, { name: "Summary" }],
+  });
+
+  assert.equal(workbook.getActiveSheet().name, "Summary");
+  assert.equal(workbook.getSheet("data").name, "Data");
+  assert.equal(workbook.tryGetSheet("SUMMARY")?.name, "Summary");
+  assert.equal(workbook.hasSheet("summary"), true);
+
+  workbook.setDefinedName("ScopedCell", "$A$1", { scope: "data" });
+  assert.equal(workbook.getDefinedName("ScopedCell", "DATA"), "$A$1");
+
+  assert.throws(() => workbook.addSheet("data"), /Sheet already exists: data/);
+  assert.throws(() => workbook.renameSheet("data", "summary"), /Sheet already exists: summary/);
+  assert.throws(() => Workbook.create({ sheets: ["Data", "data"] }), /Sheet already exists: data/);
+
+  workbook.renameSheet("data", "DATA");
+  assert.deepEqual(workbook.getSheetNames(), ["DATA", "Summary"]);
+
+  workbook.moveSheet("summary", 0);
+  assert.deepEqual(workbook.getSheetNames(), ["Summary", "DATA"]);
+
+  workbook.setActiveSheet("data");
+  assert.equal(workbook.getActiveSheet().name, "DATA");
+
+  workbook.deleteSheet("summary");
+  assert.deepEqual(workbook.getSheetNames(), ["DATA"]);
+});
+
 test("error cells expose structured error metadata", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const entries = replaceEntryText(
@@ -961,6 +992,33 @@ test("sheet and workbook recalculate APIs stay manual and resolve cross-sheet na
   assert.deepEqual(workbookSummary, { cells: 2, sheets: 2, updated: 2 });
   assert.equal(summary.getCell("B1"), 16);
   assert.equal(summary.getCell("B2"), 11);
+});
+
+test("cross-sheet formulas and sheet rewrites ignore sheet name case", () => {
+  const workbook = Workbook.create({
+    sheets: [{ name: "Data" }, { name: "Summary" }],
+  });
+  const data = workbook.getSheet("Data");
+  const summary = workbook.getSheet("Summary");
+
+  data.setCell("A1", 4);
+  data.setCell("A2", 6);
+  summary.setFormula("A1", "data!A1+1", { cachedValue: 0 });
+  summary.setFormula("A2", "SUM('data'!A1:A2)", { cachedValue: 0 });
+
+  const recalc = summary.recalculate();
+
+  assert.deepEqual(recalc, { cells: 2, sheets: 1, updated: 2 });
+  assert.equal(summary.getCell("A1"), 5);
+  assert.equal(summary.getCell("A2"), 10);
+
+  workbook.renameSheet("DATA", "Data Set");
+  assert.equal(workbook.getSheet("Summary").getFormula("A1"), "'Data Set'!A1+1");
+  assert.equal(workbook.getSheet("Summary").getFormula("A2"), "SUM('Data Set'!A1:A2)");
+
+  workbook.deleteSheet("data set");
+  assert.equal(workbook.getSheet("Summary").getFormula("A1"), "#REF!+1");
+  assert.equal(workbook.getSheet("Summary").getFormula("A2"), "SUM(#REF!)");
 });
 
 test("manual recalc writes cached formula errors with structured metadata", () => {
