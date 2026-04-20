@@ -1002,6 +1002,45 @@ test("manual recalc rejects shared formula cells for now", async () => {
   );
 });
 
+test("manual recalc supports MATCH and VLOOKUP lookups", () => {
+  const workbook = Workbook.create({
+    sheets: [{ name: "Data" }, { name: "Summary" }],
+  });
+  let data = workbook.getSheet("Data");
+  let summary = workbook.getSheet("Summary");
+
+  data.setRange("A1", [
+    [1, "Low"],
+    [5, "Mid"],
+    [10, "High"],
+    [20, "Top"],
+  ]);
+  data.setColumn("D", [20, 10, 5, 1], 1);
+  data.setRange("F1", [
+    ["Alpha", 11],
+    ["Bravo", 22],
+    ["Charlie", 33],
+  ]);
+
+  workbook.setDefinedName("LookupTable", "Data!$F$1:$G$3");
+  summary = workbook.getSheet("Summary");
+
+  summary.setFormula("A1", "MATCH(10,Data!A1:A4,0)", { cachedValue: 0 });
+  summary.setFormula("A2", "MATCH(9,Data!A1:A4,1)", { cachedValue: 0 });
+  summary.setFormula("A3", "MATCH(9,Data!D1:D4,-1)", { cachedValue: 0 });
+  summary.setFormula("A4", 'VLOOKUP("bravo",LookupTable,2,0)', { cachedValue: 0 });
+  summary.setFormula("A5", "VLOOKUP(9,Data!A1:B4,2,TRUE)", { cachedValue: "" });
+
+  const recalc = summary.recalculate();
+
+  assert.deepEqual(recalc, { cells: 5, sheets: 1, updated: 5 });
+  assert.equal(summary.getCell("A1"), 3);
+  assert.equal(summary.getCell("A2"), 2);
+  assert.equal(summary.getCell("A3"), 2);
+  assert.equal(summary.getCell("A4"), 22);
+  assert.equal(summary.getCell("A5"), "Mid");
+});
+
 test("inline string cells decode numeric entities and ignore phonetic runs", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const entries = replaceEntryText(

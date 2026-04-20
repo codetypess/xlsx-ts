@@ -47,8 +47,10 @@ type AstNode =
   | { kind: "unary"; operand: AstNode; operator: string };
 
 type EvaluatedValue =
-  | { kind: "range"; values: ScalarValue[] }
+  | { height: number; kind: "range"; values: ScalarValue[]; width: number }
   | { kind: "scalar"; value: ScalarValue };
+
+type RangeValue = Extract<EvaluatedValue, { kind: "range" }>;
 
 interface FormulaCellDefinition {
   address: string;
@@ -156,10 +158,11 @@ class FormulaParser {
 
   private parseUnary(): AstNode {
     if (this.matchOperator("+", "-")) {
+      const operator = this.previous().value;
       return {
         kind: "unary",
         operand: this.parseUnary(),
-        operator: this.previous().value,
+        operator,
       };
     }
 
@@ -397,6 +400,10 @@ class FormulaRuntime {
 
         return scalarResult({ error: null, value: !toBoolean(value) });
       }
+      case "MATCH":
+        return this.evaluateMatchFunction(node, currentSheetName);
+      case "VLOOKUP":
+        return this.evaluateVlookupFunction(node, currentSheetName);
     }
 
     const evaluatedArguments = node.arguments.map((argument) => this.evaluateNode(argument, currentSheetName));
@@ -475,6 +482,74 @@ class FormulaRuntime {
     }
   }
 
+  private evaluateMatchFunction(node: Extract<AstNode, { kind: "function" }>, currentSheetName: string): EvaluatedValue {
+    if (node.arguments.length < 2 || node.arguments.length > 3) {
+      throw new XlsxError("MATCH expects two or three arguments");
+    }
+
+    const lookupValue = ensureScalarValue(this.evaluateNode(node.arguments[0]!, currentSheetName));
+    if (lookupValue.error !== null) {
+      return scalarResult(lookupValue);
+    }
+
+    const lookupArray = coerceToRangeValue(this.evaluateNode(node.arguments[1]!, currentSheetName));
+    const vector = extractLookupVector(lookupArray);
+    if (!vector) {
+      return scalarResult(makeErrorValue("#N/A"));
+    }
+
+    const matchType = resolveMatchType(
+      node.arguments[2] ? ensureScalarValue(this.evaluateNode(node.arguments[2]!, currentSheetName)) : null,
+    );
+    if (typeof matchType !== "number") {
+      return scalarResult(matchType);
+    }
+
+    const index =
+      matchType === 0
+        ? findExactLookupIndex(vector, lookupValue)
+        : findApproximateLookupIndex(vector, lookupValue, matchType);
+
+    return scalarResult(index === -1 ? makeErrorValue("#N/A") : { error: null, value: index + 1 });
+  }
+
+  private evaluateVlookupFunction(
+    node: Extract<AstNode, { kind: "function" }>,
+    currentSheetName: string,
+  ): EvaluatedValue {
+    if (node.arguments.length < 3 || node.arguments.length > 4) {
+      throw new XlsxError("VLOOKUP expects three or four arguments");
+    }
+
+    const lookupValue = ensureScalarValue(this.evaluateNode(node.arguments[0]!, currentSheetName));
+    if (lookupValue.error !== null) {
+      return scalarResult(lookupValue);
+    }
+
+    const table = coerceToRangeValue(this.evaluateNode(node.arguments[1]!, currentSheetName));
+    const columnIndex = resolveColumnIndex(
+      ensureScalarValue(this.evaluateNode(node.arguments[2]!, currentSheetName)),
+      table.width,
+    );
+    if (typeof columnIndex !== "number") {
+      return scalarResult(columnIndex);
+    }
+
+    const rangeLookup = resolveRangeLookup(
+      node.arguments[3] ? ensureScalarValue(this.evaluateNode(node.arguments[3]!, currentSheetName)) : null,
+    );
+    if (typeof rangeLookup !== "boolean") {
+      return scalarResult(rangeLookup);
+    }
+
+    const firstColumn = extractTableColumn(table, 0);
+    const rowIndex = rangeLookup
+      ? findApproximateLookupIndex(firstColumn, lookupValue, 1)
+      : findExactLookupIndex(firstColumn, lookupValue);
+
+    return scalarResult(rowIndex === -1 ? makeErrorValue("#N/A") : getRangeValue(table, rowIndex, columnIndex - 1));
+  }
+
   private evaluateName(node: Extract<AstNode, { kind: "name" }>, currentSheetName: string): EvaluatedValue {
     const key = `name:${currentSheetName}:${node.name.toUpperCase()}`;
     const cached = this.nameResults.get(key);
@@ -510,15 +585,12 @@ class FormulaRuntime {
       case "number":
         return scalarResult({ error: null, value: node.value });
       case "range":
-        return {
-          kind: "range",
-          values: collectRangeValues(
-            this,
-            node.sheetName ?? currentSheetName,
-            node.startAddress,
-            node.endAddress,
-          ),
-        };
+        return collectRangeValues(
+          this,
+          node.sheetName ?? currentSheetName,
+          node.startAddress,
+          node.endAddress,
+        );
       case "reference":
         return scalarResult(this.readCellValue(node.sheetName ?? currentSheetName, node.address));
       case "string":
@@ -733,10 +805,12 @@ function collectRangeValues(
   sheetName: string,
   startAddress: string,
   endAddress: string,
-): ScalarValue[] {
+): RangeValue {
   const start = splitCellAddress(startAddress);
   const end = splitCellAddress(endAddress);
   const range = parseRangeRef(`${makeCellAddress(start.rowNumber, start.columnNumber)}:${makeCellAddress(end.rowNumber, end.columnNumber)}`);
+  const width = range.endColumn - range.startColumn + 1;
+  const height = range.endRow - range.startRow + 1;
   const values: ScalarValue[] = [];
 
   for (let rowNumber = range.startRow; rowNumber <= range.endRow; rowNumber += 1) {
@@ -745,7 +819,7 @@ function collectRangeValues(
     }
   }
 
-  return values;
+  return rangeResult(values, width, height);
 }
 
 function createRuntime(workbook: Workbook): FormulaRuntime {
@@ -845,6 +919,65 @@ function flattenValues(value: EvaluatedValue): ScalarValue[] {
   return value.kind === "range" ? value.values : [value.value];
 }
 
+function coerceToRangeValue(value: EvaluatedValue): RangeValue {
+  return value.kind === "range" ? value : rangeResult([value.value], 1, 1);
+}
+
+function extractLookupVector(range: RangeValue): ScalarValue[] | null {
+  return range.width === 1 || range.height === 1 ? range.values : null;
+}
+
+function extractTableColumn(range: RangeValue, columnIndex: number): ScalarValue[] {
+  const values: ScalarValue[] = [];
+
+  for (let rowIndex = 0; rowIndex < range.height; rowIndex += 1) {
+    values.push(getRangeValue(range, rowIndex, columnIndex));
+  }
+
+  return values;
+}
+
+function findApproximateLookupIndex(values: ScalarValue[], lookupValue: ScalarValue, matchType: number): number {
+  let bestIndex = -1;
+  let bestValue: ScalarValue | undefined;
+
+  for (const [index, candidate] of values.entries()) {
+    if (candidate.error !== null) {
+      continue;
+    }
+
+    const candidateComparison = compareLookupValues(candidate, lookupValue);
+    if ((matchType > 0 && candidateComparison > 0) || (matchType < 0 && candidateComparison < 0)) {
+      continue;
+    }
+
+    if (
+      bestValue === undefined ||
+      (matchType > 0 && compareLookupValues(candidate, bestValue) >= 0) ||
+      (matchType < 0 && compareLookupValues(candidate, bestValue) <= 0)
+    ) {
+      bestIndex = index;
+      bestValue = candidate;
+    }
+  }
+
+  return bestIndex;
+}
+
+function findExactLookupIndex(values: ScalarValue[], lookupValue: ScalarValue): number {
+  for (const [index, candidate] of values.entries()) {
+    if (candidate.error !== null) {
+      continue;
+    }
+
+    if (compareLookupValues(candidate, lookupValue) === 0) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function isCellReferenceToken(value: string): boolean {
   return /^\$?[A-Z]+\$?\d+$/i.test(value);
 }
@@ -906,7 +1039,11 @@ function compareScalarValues(left: ScalarValue, right: ScalarValue): number {
     return (leftNumber.value as number) - (rightNumber.value as number);
   }
 
-  return stringifyScalar(left).localeCompare(stringifyScalar(right));
+  return compareTextValues(stringifyScalar(left), stringifyScalar(right));
+}
+
+function compareLookupValues(left: ScalarValue, right: ScalarValue): number {
+  return compareScalarValues(left, right);
 }
 
 function splitFormulaKey(key: string): { address: string; sheetName: string } {
@@ -960,6 +1097,80 @@ function toBoolean(value: ScalarValue): boolean {
 
 function findFirstError(values: ScalarValue[]): ScalarValue | null {
   return values.find((value) => value.error !== null) ?? null;
+}
+
+function getRangeValue(range: RangeValue, rowIndex: number, columnIndex: number): ScalarValue {
+  return range.values[rowIndex * range.width + columnIndex]!;
+}
+
+function rangeResult(values: ScalarValue[], width: number, height: number): RangeValue {
+  return {
+    height,
+    kind: "range",
+    values,
+    width,
+  };
+}
+
+function resolveColumnIndex(value: ScalarValue, width: number): ScalarValue | number {
+  if (value.error !== null) {
+    return value;
+  }
+
+  const numericValue = toNumber(value);
+  if (numericValue.error !== null || typeof numericValue.value !== "number" || !Number.isFinite(numericValue.value)) {
+    return makeErrorValue("#VALUE!");
+  }
+
+  const columnIndex = Math.trunc(numericValue.value);
+  if (columnIndex < 1) {
+    return makeErrorValue("#VALUE!");
+  }
+  if (columnIndex > width) {
+    return makeErrorValue("#REF!");
+  }
+
+  return columnIndex;
+}
+
+function resolveMatchType(value: ScalarValue | null): ScalarValue | number {
+  if (value === null) {
+    return 1;
+  }
+
+  if (value.error !== null) {
+    return value;
+  }
+
+  const numericValue = toNumber(value);
+  if (numericValue.error !== null || typeof numericValue.value !== "number" || !Number.isFinite(numericValue.value)) {
+    return makeErrorValue("#VALUE!");
+  }
+
+  if (numericValue.value === 0) {
+    return 0;
+  }
+
+  return numericValue.value > 0 ? 1 : -1;
+}
+
+function resolveRangeLookup(value: ScalarValue | null): boolean | ScalarValue {
+  if (value === null) {
+    return true;
+  }
+
+  if (value.error !== null) {
+    return value;
+  }
+
+  return toBoolean(value);
+}
+
+function compareTextValues(left: string, right: string): number {
+  const leftText = left.toUpperCase();
+  const rightText = right.toUpperCase();
+
+  return leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
 }
 
 function toNumber(value: ScalarValue, allowText = false): ScalarValue {
