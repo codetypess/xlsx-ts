@@ -28,6 +28,15 @@ test("symlinked CLI entry prints help output", async () => {
   }
 });
 
+test("cli prints the package version", async () => {
+  const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as { version: string };
+  const result = await runCliCapture(["--version"]);
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout.trim(), packageJson.version);
+  assert.equal(result.stderr, "");
+});
+
 test("inspect reports workbook structure as JSON", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 

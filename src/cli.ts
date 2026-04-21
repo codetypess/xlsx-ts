@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Command, CommanderError } from "commander";
@@ -20,6 +20,8 @@ interface CliIo {
   stderr?: Writer;
   stdout?: Writer;
 }
+
+const CLI_VERSION = resolveCliVersion();
 
 export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
   const stdout = io.stdout ?? ((chunk: string) => process.stdout.write(chunk));
@@ -47,6 +49,7 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
 function createProgram(io: Required<CliIo>): Command {
   const program = new Command()
     .name("fastxlsx")
+    .version(CLI_VERSION)
     .description("Lossless-first XLSX inspection and editing CLI")
     .showHelpAfterError()
     .configureOutput({
@@ -93,6 +96,33 @@ function createProgram(io: Required<CliIo>): Command {
   });
 
   return program;
+}
+
+function resolveCliVersion(): string {
+  let currentDirectory = dirname(fileURLToPath(import.meta.url));
+  const filesystemRoot = parse(currentDirectory).root;
+
+  while (true) {
+    const packageJsonPath = join(currentDirectory, "package.json");
+    if (existsSync(packageJsonPath)) {
+      try {
+        const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
+        if (typeof packageJson.version === "string" && packageJson.version.length > 0) {
+          return packageJson.version;
+        }
+      } catch {
+        // Keep walking upward until a readable package.json with a version is found.
+      }
+    }
+
+    if (currentDirectory === filesystemRoot) {
+      break;
+    }
+
+    currentDirectory = dirname(currentDirectory);
+  }
+
+  return "0.0.0";
 }
 
 async function main(): Promise<void> {

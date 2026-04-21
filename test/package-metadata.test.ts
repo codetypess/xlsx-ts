@@ -56,8 +56,11 @@ test("packed tarball exposes runnable entrypoints without stale build artifacts"
     await assertPathExists(join(packageRoot, "dist/src/index.d.ts"));
     await assertPathExists(join(packageRoot, "dist/src/cli.js"));
 
+    const packedPackageJson = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as { version: string };
     const cliResult = runChecked(packageRoot, process.execPath, ["dist/src/cli.js", "--help"]);
     assert.match(cliResult.stdout, /Usage: fastxlsx \[options\] \[command\]/);
+    const versionResult = runChecked(packageRoot, process.execPath, ["dist/src/cli.js", "--version"]);
+    assert.equal(versionResult.stdout.trim(), packedPackageJson.version);
 
     runChecked(packageRoot, process.execPath, [
       "--input-type=module",
