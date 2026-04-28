@@ -7,7 +7,7 @@ import type {
 } from "../types.js";
 import { XlsxError } from "../errors.js";
 import { findFirstXmlTag, findXmlTags, getTagAttr, type XmlTag } from "../utils/xml-read.js";
-import { decodeXmlText, escapeXmlText, serializeAttributes } from "../utils/xml.js";
+import { decodeXmlText, escapeXmlText, parseAttributes, serializeAttributes } from "../utils/xml.js";
 import {
   compareCellAddresses,
   normalizeCellAddress,
@@ -15,6 +15,8 @@ import {
   normalizeSqref,
 } from "./sheet-address.js";
 import {
+  buildXmlElement,
+  buildSelfClosingXmlElement,
   buildCountedXmlContainer,
   findWorksheetChildInsertionIndex,
   replaceXmlTagSource,
@@ -136,13 +138,27 @@ export function parseSheetAutoFilter(sheetXml: string): string | null {
 
 export function upsertAutoFilterInSheetXml(sheetXml: string, range: string): string {
   const normalizedRange = normalizeRangeRef(range);
-  const autoFilterXml = `<autoFilter ref="${normalizedRange}"/>`;
   const autoFilterTag = findFirstXmlTag(sheetXml, "autoFilter");
 
   if (autoFilterTag) {
+    const attributes = parseAttributes(autoFilterTag.attributesSource);
+    const refIndex = attributes.findIndex(([name]) => name === "ref");
+    const nextAttributes = [...attributes];
+
+    if (refIndex === -1) {
+      nextAttributes.push(["ref", normalizedRange]);
+    } else {
+      nextAttributes[refIndex] = ["ref", normalizedRange];
+    }
+
+    const autoFilterXml =
+      autoFilterTag.innerXml === null
+        ? buildSelfClosingXmlElement("autoFilter", nextAttributes)
+        : buildXmlElement("autoFilter", nextAttributes, autoFilterTag.innerXml);
     return replaceXmlTagSource(sheetXml, autoFilterTag, autoFilterXml);
   }
 
+  const autoFilterXml = `<autoFilter ref="${normalizedRange}"/>`;
   const insertionIndex = findWorksheetChildInsertionIndex(sheetXml, AUTO_FILTER_FOLLOWING_TAGS);
   return sheetXml.slice(0, insertionIndex) + autoFilterXml + sheetXml.slice(insertionIndex);
 }

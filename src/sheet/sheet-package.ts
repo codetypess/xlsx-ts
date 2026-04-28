@@ -38,24 +38,30 @@ export function parseSheetTables(
   const tables: SheetTableMetadata[] = [];
 
   for (const table of tableReferences) {
-    const tableXml = readEntryText(table.path);
-    const tableTag = findFirstXmlTag(tableXml, "table");
-    if (!tableTag) {
-      continue;
+    const metadata = parseSheetTableMetadata(readEntryText(table.path), table.path);
+    if (metadata) {
+      tables.push(metadata);
     }
-
-    const name = getTagAttr(tableTag, "name");
-    const displayName = getTagAttr(tableTag, "displayName");
-    const range = getTagAttr(tableTag, "ref");
-
-    if (!name || !displayName || !range) {
-      continue;
-    }
-
-    tables.push({ name, displayName, range: normalizeRangeRef(range), path: table.path });
   }
 
   return tables;
+}
+
+export function parseSheetTableMetadata(tableXml: string, path: string): SheetTableMetadata | null {
+  const tableTag = findFirstXmlTag(tableXml, "table");
+  if (!tableTag) {
+    return null;
+  }
+
+  const name = getTagAttr(tableTag, "name");
+  const displayName = getTagAttr(tableTag, "displayName");
+  const range = getTagAttr(tableTag, "ref");
+
+  if (!name || !displayName || !range) {
+    return null;
+  }
+
+  return { name, displayName, range: normalizeRangeRef(range), path };
 }
 
 export function findSheetTableReferenceByName(

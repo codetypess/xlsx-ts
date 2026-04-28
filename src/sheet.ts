@@ -1,5 +1,7 @@
 import { Cell } from "./cell.js";
 import type {
+  AutoFilterColumn,
+  AutoFilterDefinition,
   CellError,
   CellStyleAlignment,
   CellStyleAlignmentPatch,
@@ -30,9 +32,13 @@ import type {
   SetHyperlinkOptions,
   SheetImportRecordsResult,
   SheetSelection,
+  SheetTable as SheetTableHandle,
   SheetPrintTitles,
+  SortRangeOptions,
+  SheetTableSummary,
   SheetUpdateRecordResult,
   SheetUpsertRecordResult,
+  SheetTableWithAutoFilterSummary,
 } from "./types.js";
 import { XlsxError } from "./errors.js";
 import {
@@ -49,6 +55,7 @@ import {
 } from "./sheet/sheet-index.js";
 import {
   compareCellAddresses,
+  formatRangeRef,
   makeCellAddress,
   normalizeCellAddress,
   normalizeColumnNumber,
@@ -93,6 +100,18 @@ import {
   updateColumnWidthInSheetXml,
 } from "./sheet/sheet-style-xml.js";
 import {
+  clearTableAutoFilterColumnsInTableXml,
+  clearWorksheetAutoFilterColumnsInSheetXml,
+  parseTableAutoFilterDefinition,
+  parseWorksheetAutoFilterDefinition,
+  setWorksheetSortStateInSheetXml,
+  setTableAutoFilterColumnInTableXml,
+  setTableAutoFilterDefinitionInTableXml,
+  setWorksheetAutoFilterRangeInSheetXml,
+  setWorksheetAutoFilterColumnInSheetXml,
+  setWorksheetAutoFilterDefinitionInSheetXml,
+} from "./sheet/sheet-auto-filter.js";
+import {
   EMPTY_RELATIONSHIPS_XML,
   getSheetRelationshipsPath,
   listTableReferences,
@@ -131,7 +150,6 @@ import {
   removeAutoFilterFromSheetXml,
   removeDataValidationFromSheetXml,
   upsertSheetProtectionInSheetXml,
-  upsertAutoFilterInSheetXml,
   upsertDataValidationInSheetXml,
 } from "./sheet/sheet-metadata.js";
 import {
@@ -146,6 +164,7 @@ import {
   getNextTableName,
   getNextTablePath,
   makeRelativeSheetRelationshipTarget,
+  parseSheetTableMetadata,
   parseSheetTables,
   removeContentTypeOverride,
   removeRelationshipById,
@@ -167,6 +186,7 @@ import {
   shiftFormulaReferences,
   shiftRangeRefColumns,
   shiftRangeRefRows,
+  translateFormulaReferences,
   transformRowXml,
   transformWorksheetStructureReferences,
 } from "./sheet/sheet-structure.js";
@@ -202,6 +222,7 @@ import {
   escapeRegex,
   escapeXmlText,
   parseAttributes,
+  serializeAttributes,
 } from "./utils/xml.js";
 
 /**
@@ -1486,6 +1507,13 @@ export class Sheet {
   }
 
   /**
+   * Reads the worksheet auto-filter definition, including supported column filters and sort state.
+   */
+  getAutoFilterDefinition(): AutoFilterDefinition | null {
+    return parseWorksheetAutoFilterDefinition(this.getSheetIndex().xml);
+  }
+
+  /**
    * Reads the current freeze pane state.
    */
   getFreezePane(): FreezePane | null {
@@ -1546,8 +1574,113 @@ export class Sheet {
   /**
    * Lists worksheet tables with their ranges and backing part paths.
    */
-  getTables(): Array<{ name: string; displayName: string; range: string; path: string }> {
-    return parseSheetTables(this.getTableReferences(), (path) => this.workbook.readEntryText(path));
+  getTables(): SheetTableSummary[];
+  getTables(options: { includeAutoFilter: true }): SheetTableWithAutoFilterSummary[];
+  getTables(options?: { includeAutoFilter?: false }): SheetTableSummary[];
+  getTables(options?: { includeAutoFilter?: boolean }): SheetTableSummary[] | SheetTableWithAutoFilterSummary[] {
+    const tableReferences = this.getTableReferences();
+    if (options?.includeAutoFilter !== true) {
+      return parseSheetTables(tableReferences, (path) => this.workbook.readEntryText(path));
+    }
+
+    return tableReferences
+      .map((tableReference) => {
+        const tableXml = this.workbook.readEntryText(tableReference.path);
+        const metadata = parseSheetTableMetadata(tableXml, tableReference.path);
+        if (!metadata) {
+          return null;
+        }
+
+        return {
+          ...metadata,
+          autoFilter: parseTableAutoFilterDefinition(tableXml),
+        } satisfies SheetTableWithAutoFilterSummary;
+      })
+      .filter((table): table is SheetTableWithAutoFilterSummary => table !== null);
+  }
+
+  /**
+   * Reads one worksheet table handle by table or display name.
+   */
+  getTable(name: string): SheetTableHandle {
+    const table = this.tryGetTable(name);
+    if (!table) {
+      throw new XlsxError(`Table not found: ${name}`);
+    }
+
+    return table;
+  }
+
+  /**
+   * Reads one worksheet table handle by table or display name.
+   */
+  tryGetTable(name: string): SheetTableHandle | null {
+    const tableReference = this.findTableReferenceByName(name);
+    if (!tableReference) {
+      return null;
+    }
+
+    const readTableState = () => {
+      const nextTableReference = this.findTableReferenceByName(name);
+      if (!nextTableReference) {
+        throw new XlsxError(`Table not found: ${name}`);
+      }
+
+      const tableXml = this.workbook.readEntryText(nextTableReference.path);
+      const metadata = parseSheetTableMetadata(tableXml, nextTableReference.path);
+      if (!metadata) {
+        throw new XlsxError(`Invalid table metadata: ${nextTableReference.path}`);
+      }
+
+      return {
+        metadata,
+        tableReference: nextTableReference,
+        tableXml,
+      };
+    };
+
+    return {
+      get name() {
+        return readTableState().metadata.name;
+      },
+      get displayName() {
+        return readTableState().metadata.displayName;
+      },
+      get range() {
+        return readTableState().metadata.range;
+      },
+      get path() {
+        return readTableState().metadata.path;
+      },
+      getAutoFilterDefinition: () => parseTableAutoFilterDefinition(readTableState().tableXml),
+      setAutoFilterDefinition: (definition) => {
+        const { metadata, tableXml, tableReference } = readTableState();
+        if (normalizeRangeRef(definition.range) !== metadata.range) {
+          throw new XlsxError(
+            `Table autoFilter range must match table range: ${normalizeRangeRef(definition.range)} !== ${metadata.range}`,
+          );
+        }
+
+        const nextTableXml = setTableAutoFilterDefinitionInTableXml(tableXml, definition);
+        if (nextTableXml !== tableXml) {
+          this.workbook.writeEntryText(tableReference.path, nextTableXml);
+        }
+      },
+      setAutoFilterColumn: (column) => {
+        const { tableXml, tableReference } = readTableState();
+        const nextTableXml = setTableAutoFilterColumnInTableXml(tableXml, column);
+        if (nextTableXml !== tableXml) {
+          this.workbook.writeEntryText(tableReference.path, nextTableXml);
+        }
+      },
+      clearAutoFilterColumns: (columnNumbers) => {
+        const { tableXml, tableReference } = readTableState();
+        const nextTableXml = clearTableAutoFilterColumnsInTableXml(tableXml, columnNumbers);
+        if (nextTableXml !== tableXml) {
+          this.workbook.writeEntryText(tableReference.path, nextTableXml);
+        }
+      },
+    };
   }
 
   /**
@@ -1797,7 +1930,40 @@ export class Sheet {
    */
   setAutoFilter(range: string): void {
     const normalizedRange = normalizeRangeRef(range);
-    const nextSheetXml = upsertAutoFilterInSheetXml(this.getSheetIndex().xml, normalizedRange);
+    const nextSheetXml = setWorksheetAutoFilterRangeInSheetXml(this.getSheetIndex().xml, normalizedRange);
+
+    if (nextSheetXml !== this.getSheetIndex().xml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
+   * Replaces the worksheet auto-filter definition.
+   */
+  setAutoFilterDefinition(definition: AutoFilterDefinition): void {
+    const nextSheetXml = setWorksheetAutoFilterDefinitionInSheetXml(this.getSheetIndex().xml, definition);
+
+    if (nextSheetXml !== this.getSheetIndex().xml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
+   * Creates or replaces one worksheet auto-filter column definition.
+   */
+  setAutoFilterColumn(column: AutoFilterColumn): void {
+    const nextSheetXml = setWorksheetAutoFilterColumnInSheetXml(this.getSheetIndex().xml, column);
+
+    if (nextSheetXml !== this.getSheetIndex().xml) {
+      this.writeSheetXml(nextSheetXml);
+    }
+  }
+
+  /**
+   * Clears worksheet auto-filter columns while keeping the filter range.
+   */
+  clearAutoFilterColumns(columnNumbers?: number[]): void {
+    const nextSheetXml = clearWorksheetAutoFilterColumnsInSheetXml(this.getSheetIndex().xml, columnNumbers);
 
     if (nextSheetXml !== this.getSheetIndex().xml) {
       this.writeSheetXml(nextSheetXml);
@@ -2149,6 +2315,130 @@ export class Sheet {
     );
     this.workbook.rewriteDefinedNamesForSheetStructure(this.name, columnNumber, count, 0, 0, "delete");
     this.updateTableReferences(columnNumber, count, 0, 0, "delete");
+  }
+
+  /**
+   * Physically sorts worksheet rows inside one rectangular range.
+   */
+  sortRange(range: string, options: SortRangeOptions): void {
+    const normalizedRange = normalizeRangeRef(range);
+    const sortContext = buildSortRangeContext(normalizedRange, options);
+    const currentSheetXml = this.getSheetIndex().xml;
+    const worksheetAutoFilterDefinition = parseWorksheetAutoFilterDefinition(currentSheetXml);
+    const tableReferences = this.getTableReferences().map((tableReference) => {
+      const tableXml = this.workbook.readEntryText(tableReference.path);
+      const metadata = parseSheetTableMetadata(tableXml, tableReference.path);
+      return metadata
+        ? {
+            autoFilter: parseTableAutoFilterDefinition(tableXml),
+            metadata,
+            tableReference,
+            tableXml,
+          }
+        : null;
+    }).filter((table): table is {
+      autoFilter: AutoFilterDefinition | null;
+      metadata: { displayName: string; name: string; path: string; range: string };
+      tableReference: TableReference;
+      tableXml: string;
+    } => table !== null);
+
+    const commentsInRange = this.getComments().filter((comment) =>
+      isCellAddressInsideSortArea(comment.address, sortContext),
+    );
+    if (commentsInRange.length > 0) {
+      throw new XlsxError(`sortRange does not yet support worksheet comments inside ${normalizedRange}`);
+    }
+
+    const sourceRows = sortContext.sourceRows.map((rowNumber) =>
+      buildSortSourceRow(
+        rowNumber,
+        sortContext,
+        (address) => this.getCurrentCellWriteState(address),
+      ),
+    );
+    const sortedRows = [...sourceRows].sort((left, right) => compareSortSourceRows(left, right, sortContext.conditions));
+    const targetRowBySource = new Map<number, number>(
+      sortedRows.map((row, index) => [row.rowNumber, sortContext.dataStartRow + index]),
+    );
+
+    this.batch(() => {
+      for (let index = 0; index < sortedRows.length; index += 1) {
+        const sourceRow = sortedRows[index]!;
+        const targetRowNumber = sortContext.dataStartRow + index;
+
+        for (let columnNumber = sortContext.startColumn; columnNumber <= sortContext.endColumn; columnNumber += 1) {
+          const targetAddress = makeCellAddress(targetRowNumber, columnNumber);
+          const sourceCell = sourceRow.cells.get(columnNumber);
+
+          if (!sourceCell || !sourceCell.snapshot.exists || !sourceCell.cellXml) {
+            const currentTargetCell = this.getCurrentCellWriteState(targetAddress);
+            if (currentTargetCell.snapshot.exists) {
+              this.stagePendingCellMutation(targetAddress, {
+                kind: "delete",
+                snapshot: createMissingCellSnapshot(),
+              });
+            }
+            continue;
+          }
+
+          const nextCellXml = translateCellXmlForSort(
+            sourceCell.cellXml,
+            sourceRow.rowNumber,
+            targetRowNumber,
+            columnNumber,
+          );
+          this.stagePendingCellMutation(targetAddress, {
+            attributesSource: extractCellAttributesSource(nextCellXml),
+            kind: "set",
+            snapshot: translateCellSnapshotForSort(sourceCell.snapshot, sourceRow.rowNumber, targetRowNumber),
+            xml: nextCellXml,
+          });
+        }
+      }
+
+      let nextSheetXml = currentSheetXml;
+      nextSheetXml = updateMergedRanges(
+        nextSheetXml,
+        parseMergedRanges(currentSheetXml).map((mergedRange) =>
+          rewriteRangeRefForSortedRows(mergedRange, sortContext, targetRowBySource),
+        ),
+      );
+      nextSheetXml = rewriteWorksheetHyperlinksForSortedRows(nextSheetXml, sortContext, targetRowBySource);
+      nextSheetXml = rewriteWorksheetDataValidationsForSortedRows(nextSheetXml, sortContext, targetRowBySource);
+
+      const sortState = {
+        range: normalizedRange,
+        conditions: sortContext.conditions.map((condition) => ({ ...condition })),
+      };
+      nextSheetXml =
+        worksheetAutoFilterDefinition && worksheetAutoFilterDefinition.range === normalizedRange
+          ? setWorksheetAutoFilterDefinitionInSheetXml(nextSheetXml, {
+              range: worksheetAutoFilterDefinition.range,
+              columns: worksheetAutoFilterDefinition.columns,
+              sortState,
+            })
+          : setWorksheetSortStateInSheetXml(nextSheetXml, sortState);
+
+      if (nextSheetXml !== this.getSheetIndex(false).xml) {
+        this.writeSheetXml(nextSheetXml);
+      }
+
+      for (const table of tableReferences) {
+        if (table.metadata.range !== normalizedRange && table.autoFilter?.range !== normalizedRange) {
+          continue;
+        }
+
+        const nextTableXml = setTableAutoFilterDefinitionInTableXml(table.tableXml, {
+          range: table.metadata.range,
+          columns: table.autoFilter?.columns ?? [],
+          sortState,
+        });
+        if (nextTableXml !== table.tableXml) {
+          this.workbook.writeEntryText(table.tableReference.path, nextTableXml);
+        }
+      }
+    });
   }
 
   /**
@@ -3112,6 +3402,14 @@ export class Sheet {
     );
   }
 
+  private findTableReferenceByName(name: string): TableReference | null {
+    return findSheetTableReferenceByName(
+      this.getTableReferences(),
+      (path) => this.workbook.readEntryText(path),
+      name,
+    );
+  }
+
   private readSheetRelationshipsXml(): string {
     const relationshipsPath = getSheetRelationshipsPath(this.path);
     return this.workbook.listEntries().includes(relationshipsPath)
@@ -3146,7 +3444,13 @@ export class Sheet {
 
     for (const table of this.getTableReferences()) {
       const tableXml = this.workbook.readEntryText(table.path);
-      const nextTableXml = rewriteTableReferenceXml(tableXml, transformRange);
+      const nextTableXml = rewriteTableReferenceXml(
+        tableXml,
+        transformRange,
+        targetColumnNumber,
+        columnCount,
+        mode,
+      );
 
       if (nextTableXml === null) {
         removedTables.push(table);
@@ -3238,8 +3542,309 @@ interface CurrentCellWriteState {
   snapshot: CellSnapshot;
 }
 
+interface SortSourceCell {
+  cellXml?: string;
+  snapshot: CellSnapshot;
+}
+
+interface SortSourceRow {
+  cells: Map<number, SortSourceCell>;
+  keySnapshots: CellSnapshot[];
+  originalIndex: number;
+  rowNumber: number;
+}
+
+interface SortRangeContext {
+  conditions: SortRangeOptions["conditions"];
+  dataStartRow: number;
+  endColumn: number;
+  endRow: number;
+  hasHeaderRow: boolean;
+  range: string;
+  sourceRows: number[];
+  startColumn: number;
+  startRow: number;
+}
+
 function isLogicalCellEntry(cell: Pick<CellEntry, "formula" | "value">): boolean {
   return cell.formula !== null || cell.value !== null;
+}
+
+function buildSortRangeContext(range: string, options: SortRangeOptions): SortRangeContext {
+  if (options.conditions.length === 0) {
+    throw new XlsxError("sortRange requires at least one sort condition");
+  }
+
+  const normalizedRange = normalizeRangeRef(range);
+  const { startRow, endRow, startColumn, endColumn } = parseRangeRef(normalizedRange);
+  const hasHeaderRow = options.hasHeaderRow ?? true;
+  const dataStartRow = hasHeaderRow ? startRow + 1 : startRow;
+
+  for (const condition of options.conditions) {
+    if (condition.columnNumber < startColumn || condition.columnNumber > endColumn) {
+      throw new XlsxError(`Sort condition column ${condition.columnNumber} is outside range ${normalizedRange}`);
+    }
+  }
+
+  const sourceRows: number[] = [];
+  for (let rowNumber = dataStartRow; rowNumber <= endRow; rowNumber += 1) {
+    sourceRows.push(rowNumber);
+  }
+
+  return {
+    conditions: options.conditions.map((condition) => ({ ...condition })),
+    dataStartRow,
+    endColumn,
+    endRow,
+    hasHeaderRow,
+    range: normalizedRange,
+    sourceRows,
+    startColumn,
+    startRow,
+  };
+}
+
+function buildSortSourceRow(
+  rowNumber: number,
+  context: SortRangeContext,
+  readCell: (address: string) => CurrentCellWriteState,
+): SortSourceRow {
+  const cells = new Map<number, SortSourceCell>();
+
+  for (let columnNumber = context.startColumn; columnNumber <= context.endColumn; columnNumber += 1) {
+    const state = readCell(makeCellAddress(rowNumber, columnNumber));
+    cells.set(columnNumber, {
+      cellXml: state.cellXml,
+      snapshot: state.snapshot,
+    });
+  }
+
+  return {
+    cells,
+    keySnapshots: context.conditions.map((condition) => cells.get(condition.columnNumber)?.snapshot ?? createMissingCellSnapshot()),
+    originalIndex: rowNumber - context.dataStartRow,
+    rowNumber,
+  };
+}
+
+function compareSortSourceRows(
+  left: SortSourceRow,
+  right: SortSourceRow,
+  conditions: SortRangeOptions["conditions"],
+): number {
+  for (let index = 0; index < conditions.length; index += 1) {
+    const condition = conditions[index]!;
+    const comparison = compareSortSnapshots(left.keySnapshots[index]!, right.keySnapshots[index]!);
+    if (comparison !== 0) {
+      return condition.descending ? -comparison : comparison;
+    }
+  }
+
+  return left.originalIndex - right.originalIndex;
+}
+
+function compareSortSnapshots(left: CellSnapshot, right: CellSnapshot): number {
+  const leftBlank = isSortBlankSnapshot(left);
+  const rightBlank = isSortBlankSnapshot(right);
+  if (leftBlank || rightBlank) {
+    if (leftBlank && rightBlank) {
+      return 0;
+    }
+
+    return leftBlank ? 1 : -1;
+  }
+
+  if (typeof left.value === "number" && typeof right.value === "number") {
+    return left.value - right.value;
+  }
+
+  if (typeof left.value === "boolean" && typeof right.value === "boolean") {
+    return Number(left.value) - Number(right.value);
+  }
+
+  return String(left.value).localeCompare(String(right.value), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function isSortBlankSnapshot(snapshot: CellSnapshot): boolean {
+  return snapshot.type === "missing" || snapshot.type === "blank" || snapshot.value === null || snapshot.value === "";
+}
+
+function translateCellSnapshotForSort(
+  snapshot: CellSnapshot,
+  sourceRowNumber: number,
+  targetRowNumber: number,
+): CellSnapshot {
+  if (snapshot.formula === null) {
+    return { ...snapshot };
+  }
+
+  return buildFormulaCellSnapshot(
+    translateFormulaReferences(snapshot.formula, 0, targetRowNumber - sourceRowNumber),
+    snapshot.error ? null : snapshot.value,
+    snapshot.styleId,
+    snapshot.error,
+  );
+}
+
+function translateCellXmlForSort(
+  cellXml: string,
+  sourceRowNumber: number,
+  targetRowNumber: number,
+  columnNumber: number,
+): string {
+  const cellTag = findFirstXmlTag(cellXml, "c");
+  if (!cellTag) {
+    return cellXml;
+  }
+
+  const rowDelta = targetRowNumber - sourceRowNumber;
+  const attributes = parseAttributes(cellTag.attributesSource).map(([name, value]) =>
+    name === "r"
+      ? ([name, makeCellAddress(targetRowNumber, columnNumber)] as [string, string])
+      : ([name, value] as [string, string]),
+  );
+  const cellOpenTag = `<c ${serializeAttributes(attributes)}`;
+  if (!cellXml.includes("</c>")) {
+    return `${cellOpenTag}/>`;
+  }
+
+  const innerStart = cellXml.indexOf(">") + 1;
+  const innerEnd = cellXml.lastIndexOf("</c>");
+  let nextInnerXml = cellXml.slice(innerStart, innerEnd);
+
+  nextInnerXml = rewriteXmlTagsByName(nextInnerXml, "f", (formulaTag) => {
+    const formulaAttributes = parseAttributes(formulaTag.attributesSource).map(([name, value]) => {
+      if (name !== "ref") {
+        return [name, value] as [string, string];
+      }
+
+      return [name, translateRangeRefByOffset(value, 0, rowDelta)] as [string, string];
+    });
+    const translatedFormula = translateFormulaReferences(decodeXmlText(formulaTag.innerXml ?? ""), 0, rowDelta);
+    return buildXmlElement("f", formulaAttributes, escapeXmlText(translatedFormula));
+  });
+
+  return `${cellOpenTag}>${nextInnerXml}</c>`;
+}
+
+function translateRangeRefByOffset(range: string, columnDelta: number, rowDelta: number): string {
+  const normalizedRange = normalizeRangeRef(range);
+  const { startRow, endRow, startColumn, endColumn } = parseRangeRef(normalizedRange);
+  return formatRangeRef(
+    startRow + rowDelta,
+    startColumn + columnDelta,
+    endRow + rowDelta,
+    endColumn + columnDelta,
+  );
+}
+
+function rewriteWorksheetHyperlinksForSortedRows(
+  sheetXml: string,
+  context: SortRangeContext,
+  targetRowBySource: Map<number, number>,
+): string {
+  return rewriteXmlTagsByName(sheetXml, "hyperlink", (hyperlinkTag) => {
+    const attributes = parseAttributes(hyperlinkTag.attributesSource);
+    const refIndex = attributes.findIndex(([name]) => name === "ref");
+    if (refIndex === -1) {
+      return hyperlinkTag.source;
+    }
+
+    const currentRef = attributes[refIndex]?.[1] ?? "";
+    const nextRef = rewriteRangeRefForSortedRows(currentRef, context, targetRowBySource);
+    const nextAttributes = [...attributes];
+    nextAttributes[refIndex] = ["ref", nextRef];
+    return hyperlinkTag.innerXml === null
+      ? `<hyperlink ${serializeAttributes(nextAttributes)}/>`
+      : buildXmlElement("hyperlink", nextAttributes, hyperlinkTag.innerXml);
+  });
+}
+
+function rewriteWorksheetDataValidationsForSortedRows(
+  sheetXml: string,
+  context: SortRangeContext,
+  targetRowBySource: Map<number, number>,
+): string {
+  return rewriteXmlTagsByName(sheetXml, "dataValidation", (validationTag) => {
+    const attributes = parseAttributes(validationTag.attributesSource);
+    const sqrefIndex = attributes.findIndex(([name]) => name === "sqref");
+    if (sqrefIndex === -1) {
+      return validationTag.source;
+    }
+
+    const currentSqref = attributes[sqrefIndex]?.[1] ?? "";
+    const nextSqref = rewriteSqrefForSortedRows(currentSqref, context, targetRowBySource);
+    const nextAttributes = [...attributes];
+    nextAttributes[sqrefIndex] = ["sqref", nextSqref];
+    return validationTag.innerXml === null
+      ? `<dataValidation ${serializeAttributes(nextAttributes)}/>`
+      : buildXmlElement("dataValidation", nextAttributes, validationTag.innerXml);
+  });
+}
+
+function rewriteSqrefForSortedRows(
+  sqref: string,
+  context: SortRangeContext,
+  targetRowBySource: Map<number, number>,
+): string {
+  return normalizeSqref(sqref)
+    .split(/\s+/)
+    .filter((range) => range.length > 0)
+    .map((range) => rewriteRangeRefForSortedRows(range, context, targetRowBySource))
+    .join(" ");
+}
+
+function rewriteRangeRefForSortedRows(
+  range: string,
+  context: SortRangeContext,
+  targetRowBySource: Map<number, number>,
+): string {
+  const normalizedRange = normalizeRangeRef(range);
+  const parsed = parseRangeRef(normalizedRange);
+
+  if (
+    parsed.endColumn < context.startColumn ||
+    parsed.startColumn > context.endColumn ||
+    parsed.endRow < context.dataStartRow ||
+    parsed.startRow > context.endRow
+  ) {
+    return normalizedRange;
+  }
+
+  if (
+    parsed.startColumn < context.startColumn ||
+    parsed.endColumn > context.endColumn ||
+    parsed.startRow < context.dataStartRow ||
+    parsed.endRow > context.endRow
+  ) {
+    throw new XlsxError(`Cannot sort ${context.range} while overlapping metadata range ${normalizedRange}`);
+  }
+
+  const mappedRows = [];
+  for (let rowNumber = parsed.startRow; rowNumber <= parsed.endRow; rowNumber += 1) {
+    mappedRows.push(targetRowBySource.get(rowNumber) ?? rowNumber);
+  }
+
+  const minRow = Math.min(...mappedRows);
+  const maxRow = Math.max(...mappedRows);
+  if (maxRow - minRow + 1 !== mappedRows.length) {
+    throw new XlsxError(`Cannot sort ${context.range} because metadata range ${normalizedRange} would become non-contiguous`);
+  }
+
+  return formatRangeRef(minRow, parsed.startColumn, maxRow, parsed.endColumn);
+}
+
+function isCellAddressInsideSortArea(address: string, context: SortRangeContext): boolean {
+  const { rowNumber, columnNumber } = splitCellAddress(address);
+  return (
+    rowNumber >= context.dataStartRow &&
+    rowNumber <= context.endRow &&
+    columnNumber >= context.startColumn &&
+    columnNumber <= context.endColumn
+  );
 }
 
 function createMissingCellSnapshot(): CellSnapshot {

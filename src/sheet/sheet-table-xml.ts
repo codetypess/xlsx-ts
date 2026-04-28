@@ -1,7 +1,11 @@
 import { basenamePosix, dirnamePosix, resolveRelationshipTarget } from "../utils/path.js";
 import { findFirstXmlTag, findXmlTags, getTagAttr } from "../utils/xml-read.js";
 import { parseAttributes } from "../utils/xml.js";
-import { buildXmlElement, buildSelfClosingXmlElement, replaceXmlTagSource } from "./sheet-xml.js";
+import {
+  rewriteAutoFilterTagWithTransformedRefs,
+  rewriteSortStateTagWithTransformedRefs,
+} from "./sheet-auto-filter.js";
+import { buildXmlElement, replaceXmlTagSource, rewriteXmlTagsByName } from "./sheet-xml.js";
 
 export interface TableReference {
   relationshipId: string;
@@ -66,6 +70,9 @@ export function listTableReferences(
 export function rewriteTableReferenceXml(
   tableXml: string,
   transformRange: (range: string) => string | null,
+  targetColumnNumber: number,
+  columnCount: number,
+  mode: "shift" | "delete",
 ): string | null {
   const tableTag = findFirstXmlTag(tableXml, "table");
   if (!tableTag) {
@@ -91,29 +98,20 @@ export function rewriteTableReferenceXml(
     tableTag,
     buildXmlElement("table", nextTableAttributes, tableTag.innerXml ?? ""),
   );
-  const autoFilterTag = findFirstXmlTag(nextTableXml, "autoFilter");
-
-  if (autoFilterTag) {
-    const attributes = parseAttributes(autoFilterTag.attributesSource);
-    const autoFilterRefIndex = attributes.findIndex(([name]) => name === "ref");
-
-    if (autoFilterRefIndex !== -1) {
-      const autoFilterRange = attributes[autoFilterRefIndex]?.[1] ?? "";
-      const nextAutoFilterRange = transformRange(autoFilterRange);
-
-      if (nextAutoFilterRange === null) {
-        nextTableXml = replaceXmlTagSource(nextTableXml, autoFilterTag, "");
-      } else {
-        const nextAttributes = [...attributes];
-        nextAttributes[autoFilterRefIndex] = ["ref", nextAutoFilterRange];
-        nextTableXml = replaceXmlTagSource(
-          nextTableXml,
-          autoFilterTag,
-          buildSelfClosingXmlElement("autoFilter", nextAttributes),
-        );
-      }
-    }
-  }
+  nextTableXml = rewriteXmlTagsByName(nextTableXml, "autoFilter", (autoFilterTag) => {
+    const nextAutoFilterXml = rewriteAutoFilterTagWithTransformedRefs(
+      autoFilterTag,
+      transformRange,
+      targetColumnNumber,
+      columnCount,
+      mode,
+    );
+    return nextAutoFilterXml ?? "";
+  });
+  nextTableXml = rewriteXmlTagsByName(nextTableXml, "sortState", (sortStateTag) => {
+    const nextSortStateXml = rewriteSortStateTagWithTransformedRefs(sortStateTag, transformRange);
+    return nextSortStateXml ?? "";
+  });
 
   return nextTableXml;
 }

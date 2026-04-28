@@ -3,7 +3,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { Command } from "commander";
 
 import {
+  assertArray,
   assertRecord,
+  assertString,
   parseJsonCellRecord,
   parseJsonCellRecordArray,
   parseJsonDocument,
@@ -15,6 +17,7 @@ import type { CellRecord } from "./cli-json.js";
 import { parseBooleanValue, parsePositiveInteger, resolveFrom, resolveOutputPath } from "./cli-shared.js";
 import type { CliCommandIo } from "./cli-shared.js";
 import { Workbook } from "../workbook.js";
+import type { AutoFilterColumn, AutoFilterCondition, AutoFilterDefinition } from "../types.js";
 
 type WorkbookSheet = ReturnType<Workbook["getSheet"]>;
 
@@ -881,10 +884,13 @@ export function registerRecordCommands(
     .command("get")
     .argument("<file>", "input xlsx file")
     .requiredOption("--sheet <name>", "sheet name")
-    .action(async (file: string, options: { sheet: string }) => {
+    .option("--definition", "include the structured auto-filter definition")
+    .action(async (file: string, options: { definition?: boolean; sheet: string }) => {
       const workbook = await Workbook.open(resolveFrom(io.cwd, file));
+      const sheet = workbook.getSheet(options.sheet);
       writeJson(io.stdout, {
-        autoFilter: workbook.getSheet(options.sheet).getAutoFilter(),
+        autoFilter: sheet.getAutoFilter(),
+        ...(options.definition ? { autoFilterDefinition: sheet.getAutoFilterDefinition() } : {}),
         sheet: options.sheet,
       });
     });
@@ -918,6 +924,119 @@ export function registerRecordCommands(
         writeJson(io.stdout, {
           action: "sheet.filter.set",
           autoFilter: sheet.getAutoFilter(),
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  filterCommand
+    .command("set-definition")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--definition <json>", "JSON AutoFilterDefinition object")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          definition: string;
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.setAutoFilterDefinition(parseJsonAutoFilterDefinition(options.definition, "--definition"));
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.filter.setDefinition",
+          autoFilter: sheet.getAutoFilter(),
+          autoFilterDefinition: sheet.getAutoFilterDefinition(),
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  filterCommand
+    .command("set-column")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .requiredOption("--column <json>", "JSON AutoFilterColumn object")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          column: string;
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.setAutoFilterColumn(parseJsonAutoFilterColumn(options.column, "--column"));
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.filter.setColumn",
+          autoFilter: sheet.getAutoFilter(),
+          autoFilterDefinition: sheet.getAutoFilterDefinition(),
+          input: inputPath,
+          output: outputPath,
+          sheet: options.sheet,
+        });
+      },
+    );
+
+  filterCommand
+    .command("clear-columns")
+    .argument("<file>", "input xlsx file")
+    .requiredOption("--sheet <name>", "sheet name")
+    .option("--column-numbers <json>", "JSON array of 1-based worksheet column numbers")
+    .option("--output <file>", "output xlsx path")
+    .option("--in-place", "overwrite the input workbook")
+    .action(
+      async (
+        file: string,
+        options: {
+          columnNumbers?: string;
+          inPlace?: boolean;
+          output?: string;
+          sheet: string;
+        },
+      ) => {
+        const inputPath = resolveFrom(io.cwd, file);
+        const outputPath = resolveOutputPath(inputPath, {
+          inPlace: options.inPlace === true,
+          output: options.output ? resolveFrom(io.cwd, options.output) : undefined,
+        });
+        const workbook = await Workbook.open(inputPath);
+        const sheet = workbook.getSheet(options.sheet);
+        sheet.clearAutoFilterColumns(
+          options.columnNumbers ? parseJsonNumberArray(options.columnNumbers, "--column-numbers") : undefined,
+        );
+        await workbook.save(outputPath);
+        writeJson(io.stdout, {
+          action: "sheet.filter.clearColumns",
+          autoFilter: sheet.getAutoFilter(),
+          autoFilterDefinition: sheet.getAutoFilterDefinition(),
           input: inputPath,
           output: outputPath,
           sheet: options.sheet,
@@ -1877,6 +1996,268 @@ function parseJsonNumberArray(source: string, label: string): number[] {
 
     return value;
   });
+}
+
+function parseJsonAutoFilterDefinition(source: string, label: string): AutoFilterDefinition {
+  const record = assertRecord(parseJsonDocument(source, label), label);
+  const range = assertString(record.range, `${label}.range`);
+  const columns = assertAutoFilterColumnArray(record.columns, `${label}.columns`);
+  const sortState = assertOptionalSortStateDefinition(record.sortState, `${label}.sortState`);
+
+  return {
+    range,
+    columns,
+    ...(sortState !== undefined ? { sortState } : {}),
+  };
+}
+
+function parseJsonAutoFilterColumn(source: string, label: string): AutoFilterColumn {
+  return assertAutoFilterColumn(parseJsonDocument(source, label), label);
+}
+
+function assertAutoFilterColumnArray(value: unknown, label: string): AutoFilterColumn[] {
+  const values = assertArray(value, label);
+  return values.map((item, index) => assertAutoFilterColumn(item, `${label}[${index}]`));
+}
+
+function assertAutoFilterColumn(value: unknown, label: string): AutoFilterColumn {
+  const record = assertRecord(value, label);
+  const columnNumber = assertPositiveIntegerValue(record.columnNumber, `${label}.columnNumber`);
+  const kind = assertString(record.kind, `${label}.kind`);
+
+  switch (kind) {
+    case "values":
+      return {
+        columnNumber,
+        kind,
+        values: parseJsonStringArray(JSON.stringify(record.values ?? []), `${label}.values`),
+        ...(record.includeBlank === undefined ? {} : { includeBlank: assertBooleanValue(record.includeBlank, `${label}.includeBlank`) }),
+      };
+    case "blank":
+      return {
+        columnNumber,
+        kind,
+        mode: assertBlankMode(record.mode, `${label}.mode`),
+      };
+    case "custom":
+      return {
+        columnNumber,
+        kind,
+        join: assertJoin(record.join, `${label}.join`),
+        conditions: assertAutoFilterConditionArray(record.conditions, `${label}.conditions`),
+      };
+    case "dateGroup":
+      return {
+        columnNumber,
+        kind,
+        items: assertDateGroupItemArray(record.items, `${label}.items`),
+      };
+    case "color":
+      return {
+        columnNumber,
+        kind,
+        dxfId: assertNonNegativeIntegerValue(record.dxfId, `${label}.dxfId`),
+        cellColor: assertBooleanValue(record.cellColor, `${label}.cellColor`),
+      };
+    case "dynamic":
+      return {
+        columnNumber,
+        kind,
+        type: assertString(record.type, `${label}.type`),
+        ...(record.val === undefined ? {} : { val: assertFiniteNumber(record.val, `${label}.val`) }),
+        ...(record.maxVal === undefined ? {} : { maxVal: assertFiniteNumber(record.maxVal, `${label}.maxVal`) }),
+        ...(record.valIso === undefined ? {} : { valIso: assertString(record.valIso, `${label}.valIso`) }),
+        ...(record.maxValIso === undefined ? {} : { maxValIso: assertString(record.maxValIso, `${label}.maxValIso`) }),
+      };
+    case "top10":
+      return {
+        columnNumber,
+        kind,
+        top: assertBooleanValue(record.top, `${label}.top`),
+        percent: assertBooleanValue(record.percent, `${label}.percent`),
+        value: assertFiniteNumber(record.value, `${label}.value`),
+        ...(record.filterValue === undefined
+          ? {}
+          : { filterValue: assertFiniteNumber(record.filterValue, `${label}.filterValue`) }),
+      };
+    case "icon":
+      return {
+        columnNumber,
+        kind,
+        ...(record.iconSet === undefined ? {} : { iconSet: assertString(record.iconSet, `${label}.iconSet`) }),
+        ...(record.iconId === undefined
+          ? {}
+          : { iconId: assertNonNegativeIntegerValue(record.iconId, `${label}.iconId`) }),
+      };
+    default:
+      throw new Error(`Unsupported ${label}.kind: ${kind}`);
+  }
+}
+
+function assertAutoFilterConditionArray(value: unknown, label: string): AutoFilterCondition[] {
+  const values = assertArray(value, label);
+  return values.map((item, index) => {
+    const record = assertRecord(item, `${label}[${index}]`);
+    const operator = assertAutoFilterConditionOperator(record.operator, `${label}[${index}].operator`);
+    const rawValue = record.value;
+    if (isTextAutoFilterConditionOperator(operator)) {
+      if (typeof rawValue !== "string") {
+        throw new Error(`Expected ${label}[${index}].value to be a string`);
+      }
+
+      return { operator, value: rawValue };
+    }
+
+    if (typeof rawValue !== "string" && typeof rawValue !== "number") {
+      throw new Error(`Expected ${label}[${index}].value to be a string or number`);
+    }
+
+    return { operator, value: rawValue };
+  });
+}
+
+function assertDateGroupItemArray(value: unknown, label: string): Array<{
+  year: number;
+  month?: number;
+  day?: number;
+  hour?: number;
+  minute?: number;
+  second?: number;
+  dateTimeGrouping: "year" | "month" | "day" | "hour" | "minute" | "second";
+}> {
+  const values = assertArray(value, label);
+  return values.map((item, index) => {
+    const record = assertRecord(item, `${label}[${index}]`);
+    return {
+      year: assertPositiveIntegerValue(record.year, `${label}[${index}].year`),
+      ...(record.month === undefined ? {} : { month: assertPositiveIntegerValue(record.month, `${label}[${index}].month`) }),
+      ...(record.day === undefined ? {} : { day: assertPositiveIntegerValue(record.day, `${label}[${index}].day`) }),
+      ...(record.hour === undefined ? {} : { hour: assertPositiveIntegerValue(record.hour, `${label}[${index}].hour`) }),
+      ...(record.minute === undefined ? {} : { minute: assertPositiveIntegerValue(record.minute, `${label}[${index}].minute`) }),
+      ...(record.second === undefined ? {} : { second: assertPositiveIntegerValue(record.second, `${label}[${index}].second`) }),
+      dateTimeGrouping: assertDateTimeGrouping(record.dateTimeGrouping, `${label}[${index}].dateTimeGrouping`),
+    };
+  });
+}
+
+function assertOptionalSortStateDefinition(
+  value: unknown,
+  label: string,
+): AutoFilterDefinition["sortState"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  const record = assertRecord(value, label);
+  const conditions = assertArray(record.conditions, `${label}.conditions`).map((item, index) => {
+    const condition = assertRecord(item, `${label}.conditions[${index}]`);
+    return {
+      columnNumber: assertPositiveIntegerValue(condition.columnNumber, `${label}.conditions[${index}].columnNumber`),
+      ...(condition.descending === undefined
+        ? {}
+        : { descending: assertBooleanValue(condition.descending, `${label}.conditions[${index}].descending`) }),
+    };
+  });
+
+  return {
+    range: assertString(record.range, `${label}.range`),
+    conditions,
+  };
+}
+
+function assertFiniteNumber(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Expected ${label} to be a finite number`);
+  }
+
+  return value;
+}
+
+function assertPositiveIntegerValue(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`Expected ${label} to be a positive integer`);
+  }
+
+  return value;
+}
+
+function assertNonNegativeIntegerValue(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`Expected ${label} to be a non-negative integer`);
+  }
+
+  return value;
+}
+
+function assertBooleanValue(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected ${label} to be a boolean`);
+  }
+
+  return value;
+}
+
+function assertJoin(value: unknown, label: string): "and" | "or" {
+  if (value === "and" || value === "or") {
+    return value;
+  }
+
+  throw new Error(`Expected ${label} to be "and" or "or"`);
+}
+
+function assertBlankMode(value: unknown, label: string): "blank" | "nonBlank" {
+  if (value === "blank" || value === "nonBlank") {
+    return value;
+  }
+
+  throw new Error(`Expected ${label} to be "blank" or "nonBlank"`);
+}
+
+function assertAutoFilterConditionOperator(value: unknown, label: string): AutoFilterCondition["operator"] {
+  if (
+    value === "equals" ||
+    value === "notEquals" ||
+    value === "greaterThan" ||
+    value === "greaterThanOrEqual" ||
+    value === "lessThan" ||
+    value === "lessThanOrEqual" ||
+    value === "contains" ||
+    value === "notContains" ||
+    value === "beginsWith" ||
+    value === "endsWith"
+  ) {
+    return value;
+  }
+
+  throw new Error(`Unsupported ${label}: ${String(value)}`);
+}
+
+function isTextAutoFilterConditionOperator(
+  value: AutoFilterCondition["operator"],
+): value is Extract<AutoFilterCondition, { value: string }>["operator"] {
+  return value === "contains" || value === "notContains" || value === "beginsWith" || value === "endsWith";
+}
+
+function assertDateTimeGrouping(
+  value: unknown,
+  label: string,
+): "year" | "month" | "day" | "hour" | "minute" | "second" {
+  if (
+    value === "year" ||
+    value === "month" ||
+    value === "day" ||
+    value === "hour" ||
+    value === "minute" ||
+    value === "second"
+  ) {
+    return value;
+  }
+
+  throw new Error(`Expected ${label} to be year, month, day, hour, minute, or second`);
 }
 
 function buildValidationOptions(options: {

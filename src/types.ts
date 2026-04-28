@@ -388,6 +388,145 @@ export interface SheetUpsertRecordResult {
   row: number;
 }
 
+export interface AutoFilterDefinition {
+  range: string;
+  columns: AutoFilterColumn[];
+  sortState?: SortStateDefinition | null;
+}
+
+export type AutoFilterColumn =
+  | ValuesFilterColumn
+  | CustomFilterColumn
+  | DateGroupFilterColumn
+  | BlankFilterColumn
+  | ColorFilterColumn
+  | DynamicFilterColumn
+  | Top10FilterColumn
+  | IconFilterColumn;
+
+export interface ValuesFilterColumn {
+  columnNumber: number;
+  kind: "values";
+  values: string[];
+  includeBlank?: boolean;
+}
+
+export interface BlankFilterColumn {
+  columnNumber: number;
+  kind: "blank";
+  mode: "blank" | "nonBlank";
+}
+
+export interface CustomFilterColumn {
+  columnNumber: number;
+  kind: "custom";
+  join: "and" | "or";
+  conditions: AutoFilterCondition[];
+}
+
+export type AutoFilterCondition =
+  | {
+      operator:
+        | "equals"
+        | "notEquals"
+        | "greaterThan"
+        | "greaterThanOrEqual"
+        | "lessThan"
+        | "lessThanOrEqual";
+      value: string | number;
+    }
+  | {
+      operator: "contains" | "notContains" | "beginsWith" | "endsWith";
+      value: string;
+    };
+
+export interface DateGroupFilterColumn {
+  columnNumber: number;
+  kind: "dateGroup";
+  items: DateGroupItem[];
+}
+
+export interface ColorFilterColumn {
+  columnNumber: number;
+  kind: "color";
+  dxfId: number;
+  cellColor: boolean;
+}
+
+export interface DynamicFilterColumn {
+  columnNumber: number;
+  kind: "dynamic";
+  type: string;
+  val?: number;
+  maxVal?: number;
+  valIso?: string;
+  maxValIso?: string;
+}
+
+export interface Top10FilterColumn {
+  columnNumber: number;
+  kind: "top10";
+  top: boolean;
+  percent: boolean;
+  value: number;
+  filterValue?: number;
+}
+
+export interface IconFilterColumn {
+  columnNumber: number;
+  kind: "icon";
+  iconSet?: string;
+  iconId?: number;
+}
+
+export interface DateGroupItem {
+  year: number;
+  month?: number;
+  day?: number;
+  hour?: number;
+  minute?: number;
+  second?: number;
+  dateTimeGrouping: "year" | "month" | "day" | "hour" | "minute" | "second";
+}
+
+export interface SortStateDefinition {
+  range: string;
+  conditions: SortConditionDefinition[];
+}
+
+export interface SortConditionDefinition {
+  columnNumber: number;
+  descending?: boolean;
+}
+
+export interface SortRangeOptions {
+  conditions: SortConditionDefinition[];
+  hasHeaderRow?: boolean;
+}
+
+export interface SheetTable {
+  readonly name: string;
+  readonly displayName: string;
+  readonly range: string;
+  readonly path: string;
+
+  getAutoFilterDefinition(): AutoFilterDefinition | null;
+  setAutoFilterDefinition(definition: AutoFilterDefinition): void;
+  setAutoFilterColumn(column: AutoFilterColumn): void;
+  clearAutoFilterColumns(columnNumbers?: number[]): void;
+}
+
+export interface SheetTableSummary {
+  name: string;
+  displayName: string;
+  range: string;
+  path: string;
+}
+
+export interface SheetTableWithAutoFilterSummary extends SheetTableSummary {
+  autoFilter: AutoFilterDefinition | null;
+}
+
 export interface DataValidation {
   range: string;
   type: string | null;

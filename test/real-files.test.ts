@@ -131,6 +131,11 @@ test("openpyxl sample opens with stable workbook structure and roundtrips cleanl
   ]);
   assert.equal(dataSheet.getRangeRef(), "A1:D3");
   assert.equal(dataSheet.getAutoFilter(), "A1:C3");
+  assert.deepEqual(dataSheet.getAutoFilterDefinition(), {
+    range: "A1:C3",
+    columns: [],
+    sortState: null,
+  });
   assert.deepEqual(dataSheet.getFreezePane(), {
     columnCount: 1,
     rowCount: 1,
@@ -199,6 +204,11 @@ test("xlsxwriter sample opens with stable workbook structure and roundtrips clea
   ]);
   assert.equal(dataSheet.getRangeRef(), "A1:E3");
   assert.equal(dataSheet.getAutoFilter(), "A1:C3");
+  assert.deepEqual(dataSheet.getAutoFilterDefinition(), {
+    range: "A1:C3",
+    columns: [],
+    sortState: null,
+  });
   assert.deepEqual(dataSheet.getFreezePane(), {
     columnCount: 1,
     rowCount: 1,

@@ -259,6 +259,8 @@ Use `upsert` only when missing rows should be inserted and matched rows can be f
 
 ## Design
 
+Repository feature work follows the SDD guide in [docs/spec-driven-development.md](docs/spec-driven-development.md).
+
 The library is split into two layers:
 
 1. `Lossless package layer`

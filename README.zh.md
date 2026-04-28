@@ -245,6 +245,8 @@ npm run cli -- sheet comment set out.xlsx --sheet Data --cell C2 --text "Final s
 
 ## 设计思路
 
+仓库后续功能开发统一遵循 [docs/spec-driven-development.md](docs/spec-driven-development.md) 里的 SDD 规范。
+
 库分成两层：
 
 1. `Lossless package layer`

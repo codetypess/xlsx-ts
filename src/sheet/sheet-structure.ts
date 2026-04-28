@@ -1,4 +1,8 @@
 import { XlsxError } from "../errors.js";
+import {
+  rewriteAutoFilterTagWithTransformedRefs,
+  rewriteSortStateTagWithTransformedRefs,
+} from "./sheet-auto-filter.js";
 import type { LocatedCell, LocatedRow } from "./sheet-index.js";
 import {
   columnLabelToNumber,
@@ -11,7 +15,7 @@ import {
 import { buildXmlElement, rewriteXmlTagsByName } from "./sheet-xml.js";
 import { decodeXmlText, escapeRegex, escapeXmlText, parseAttributes, serializeAttributes } from "../utils/xml.js";
 
-const WORKSHEET_REF_TAGS = ["autoFilter", "sortState", "hyperlink"];
+const WORKSHEET_REF_TAGS = ["hyperlink"];
 const WORKSHEET_SQREF_TAGS = [
   "conditionalFormatting",
   "dataValidation",
@@ -191,6 +195,22 @@ export function transformWorksheetStructureReferences(
       : deleteRangeRef(range, targetColumnNumber, columnCount, targetRowNumber, rowCount);
 
   let nextSheetXml = sheetXml;
+
+  nextSheetXml = rewriteXmlTagsByName(nextSheetXml, "autoFilter", (autoFilterTag) => {
+    const nextAutoFilterXml = rewriteAutoFilterTagWithTransformedRefs(
+      autoFilterTag,
+      transformRange,
+      targetColumnNumber,
+      columnCount,
+      mode,
+    );
+    return nextAutoFilterXml ?? "";
+  });
+
+  nextSheetXml = rewriteXmlTagsByName(nextSheetXml, "sortState", (sortStateTag) => {
+    const nextSortStateXml = rewriteSortStateTagWithTransformedRefs(sortStateTag, transformRange);
+    return nextSortStateXml ?? "";
+  });
 
   for (const tagName of WORKSHEET_REF_TAGS) {
     nextSheetXml = rewriteWorksheetReferenceTag(nextSheetXml, tagName, "ref", false, transformRange);

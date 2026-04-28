@@ -124,10 +124,60 @@ test("synthetic rich-part workbook roundtrips and keeps drawing/comment/extLst p
   }
 });
 
+test("synthetic advanced autoFilter workbook saves and reloads structured filter definitions", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-advanced-filter-"));
+
+  try {
+    const filePath = join(tempRoot, "advanced-filter.xlsx");
+    const workbook = Workbook.create("Sheet1");
+    const sheet = workbook.getSheet("Sheet1");
+
+    sheet.setRange("A1", [
+      ["A", "B", "C", "D", "E"],
+      [1, 2, 3, 4, 5],
+    ]);
+    sheet.setAutoFilterDefinition({
+      range: "A1:E2",
+      columns: [
+        { columnNumber: 1, kind: "blank", mode: "nonBlank" },
+        { columnNumber: 2, kind: "color", dxfId: 3, cellColor: true },
+        { columnNumber: 3, kind: "dynamic", type: "today" },
+        { columnNumber: 4, kind: "top10", top: false, percent: true, value: 10 },
+        { columnNumber: 5, kind: "icon", iconSet: "3Arrows", iconId: 1 },
+      ],
+      sortState: {
+        range: "A1:E2",
+        conditions: [{ columnNumber: 2, descending: true }],
+      },
+    });
+
+    await workbook.save(filePath);
+
+    const reopened = await Workbook.open(filePath);
+    assert.deepEqual(reopened.getSheet("Sheet1").getAutoFilterDefinition(), {
+      range: "A1:E2",
+      columns: [
+        { columnNumber: 1, kind: "blank", mode: "nonBlank" },
+        { columnNumber: 2, kind: "color", dxfId: 3, cellColor: true },
+        { columnNumber: 3, kind: "dynamic", type: "today" },
+        { columnNumber: 4, kind: "top10", top: false, percent: true, value: 10 },
+        { columnNumber: 5, kind: "icon", iconSet: "3Arrows", iconId: 1 },
+      ],
+      sortState: {
+        range: "A1:E2",
+        conditions: [{ columnNumber: 2, descending: true }],
+      },
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 function collectSheetInteropSnapshot(workbook: Workbook, sheet: ReturnType<Workbook["getSheet"]>, cell: string) {
   return {
     activeSheet: workbook.getActiveSheet().name,
     autoFilter: sheet.getAutoFilter(),
+    autoFilterDefinition: sheet.getAutoFilterDefinition(),
     backgroundColor: sheet.getBackgroundColor(cell),
     dataValidations: sheet.getDataValidations(),
     definedNames: workbook.getDefinedNames(),

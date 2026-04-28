@@ -2855,8 +2855,14 @@ test("insertColumn updates worksheet ref attributes and defined names", async ()
       <c r="C2"><v>6</v></c>
     </row>
   </sheetData>
-  <autoFilter ref="A1:C4"/>
-  <sortState ref="A2:C4"/>
+  <autoFilter ref="A1:C4">
+    <filterColumn colId="0"><filters><filter val="Alpha"/></filters></filterColumn>
+    <filterColumn colId="1"><filters><filter val="Beta"/></filters></filterColumn>
+  </autoFilter>
+  <sortState ref="A2:C4">
+    <sortCondition ref="B2:B4"/>
+    <sortCondition ref="C2:C4" descending="1"/>
+  </sortState>
   <conditionalFormatting sqref="B2:C4"><cfRule type="expression" priority="1"><formula>B2&gt;0</formula></cfRule></conditionalFormatting>
   <dataValidations count="1"><dataValidation type="whole" sqref="A2:B4"/></dataValidations>
   <hyperlinks><hyperlink ref="C2" location="#Sheet1!A1"/></hyperlinks>
@@ -2871,8 +2877,12 @@ test("insertColumn updates worksheet ref attributes and defined names", async ()
   const workbookXml = entryText(workbook.toEntries(), "xl/workbook.xml");
 
   assert.match(sheetXml, /<selection activeCell="C2" sqref="C2:D2"\/>/);
-  assert.match(sheetXml, /<autoFilter ref="A1:D4"\/>/);
-  assert.match(sheetXml, /<sortState ref="A2:D4"\/>/);
+  assert.match(sheetXml, /<autoFilter ref="A1:D4">/);
+  assert.match(sheetXml, /<filterColumn colId="0"><filters><filter val="Alpha"\/><\/filters><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="2"><filters><filter val="Beta"\/><\/filters><\/filterColumn>/);
+  assert.match(sheetXml, /<sortState ref="A2:D4">/);
+  assert.match(sheetXml, /<sortCondition ref="C2:C4"\/>/);
+  assert.match(sheetXml, /<sortCondition ref="D2:D4" descending="1"\/>/);
   assert.match(sheetXml, /<conditionalFormatting sqref="C2:D4">/);
   assert.match(sheetXml, /<dataValidations count="1"><dataValidation type="whole" sqref="A2:C4"\/><\/dataValidations>/);
   assert.match(sheetXml, /<hyperlinks><hyperlink ref="D2" location="#Sheet1!A1"\/><\/hyperlinks>/);
@@ -2964,6 +2974,57 @@ test("deleteColumn shifts cells, shrinks ranges, and emits #REF! for deleted ref
   assert.match(sheetXml, /<c r="B1"><f>SUM\(A1:C1\)<\/f><v>10<\/v><\/c>/);
   assert.match(sheetXml, /<c r="C1"><f>#REF!<\/f><v>2<\/v><\/c>/);
   assert.match(sheetXml, /<mergeCell ref="B2:C2"\/>/);
+});
+
+test("deleteColumn updates worksheet autoFilter column ids and sort conditions", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1"><v>2</v></c>
+      <c r="C1"><v>3</v></c>
+      <c r="D1"><v>4</v></c>
+    </row>
+    <row r="2">
+      <c r="A2"><v>5</v></c>
+      <c r="B2"><v>6</v></c>
+      <c r="C2"><v>7</v></c>
+      <c r="D2"><v>8</v></c>
+    </row>
+    <row r="3">
+      <c r="A3"><v>9</v></c>
+      <c r="B3"><v>10</v></c>
+      <c r="C3"><v>11</v></c>
+      <c r="D3"><v>12</v></c>
+    </row>
+  </sheetData>
+  <autoFilter ref="A1:D3">
+    <filterColumn colId="0"><filters><filter val="A"/></filters></filterColumn>
+    <filterColumn colId="1"><filters><filter val="B"/></filters></filterColumn>
+    <filterColumn colId="3"><filters><filter val="D"/></filters></filterColumn>
+  </autoFilter>
+  <sortState ref="A2:D3">
+    <sortCondition ref="B2:B3"/>
+    <sortCondition ref="D2:D3" descending="1"/>
+  </sortState>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.deleteColumn("B");
+
+  const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<autoFilter ref="A1:C3">/);
+  assert.match(sheetXml, /<filterColumn colId="0"><filters><filter val="A"\/><\/filters><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="2"><filters><filter val="D"\/><\/filters><\/filterColumn>/);
+  assert.doesNotMatch(sheetXml, /<filterColumn colId="1"><filters><filter val="B"\/><\/filters><\/filterColumn>/);
+  assert.match(sheetXml, /<sortState ref="A2:C3"><sortCondition ref="C2:C3" descending="1"\/><\/sortState>/);
 });
 
 test("deleteRow updates formulas in other sheets that reference the edited sheet", async () => {
@@ -3108,7 +3169,9 @@ test("deleteRow updates worksheet ref attributes and defined names", async () =>
     </row>
   </sheetData>
   <autoFilter ref="A1:C4"/>
-  <sortState ref="A2:C4"/>
+  <sortState ref="A2:C4">
+    <sortCondition ref="B2:B4"/>
+  </sortState>
   <conditionalFormatting sqref="B2:C4"><cfRule type="expression" priority="1"><formula>B2&gt;0</formula></cfRule></conditionalFormatting>
   <dataValidations count="1"><dataValidation type="whole" sqref="A2:B4"/></dataValidations>
   <hyperlinks><hyperlink ref="C3" location="#Sheet1!A1"/></hyperlinks>
@@ -3124,7 +3187,7 @@ test("deleteRow updates worksheet ref attributes and defined names", async () =>
 
   assert.match(sheetXml, /<selection activeCell="B2" sqref="B2:C2"\/>/);
   assert.match(sheetXml, /<autoFilter ref="A1:C3"\/>/);
-  assert.match(sheetXml, /<sortState ref="A2:C3"\/>/);
+  assert.match(sheetXml, /<sortState ref="A2:C3"><sortCondition ref="B2:B3"\/><\/sortState>/);
   assert.match(sheetXml, /<conditionalFormatting sqref="B2:C3">/);
   assert.match(sheetXml, /<dataValidations count="1"><dataValidation type="whole" sqref="A2:B3"\/><\/dataValidations>/);
   assert.match(sheetXml, /<hyperlinks><hyperlink ref="C2" location="#Sheet1!A1"\/><\/hyperlinks>/);
@@ -4707,6 +4770,401 @@ test("sheet comment APIs create, update, read, and delete comments", async () =>
   assert.equal(workbook.listEntries().includes("xl/drawings/vmlDrawing1.vml"), false);
 });
 
+test("sheet autoFilter definition reads supported columns and sort state", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="B1"><v>Header 1</v></c><c r="C1"><v>Header 2</v></c><c r="D1"><v>Header 3</v></c></row>
+    <row r="2"><c r="B2"><v>Alpha</v></c><c r="C2"><v>11</v></c><c r="D2"><v>2024-04</v></c></row>
+    <row r="3"><c r="B3"><v>Beta</v></c><c r="C3"><v>15</v></c><c r="D3"><v>2024-05</v></c></row>
+    <row r="4"><c r="B4"><v>Gamma</v></c><c r="C4"><v>21</v></c><c r="D4"><v>2024-06</v></c></row>
+    <row r="5"><c r="B5"><v></v></c><c r="C5"><v>18</v></c><c r="D5"><v>2024-07</v></c></row>
+  </sheetData>
+  <autoFilter ref="B2:D5">
+    <filterColumn colId="0">
+      <filters blank="1">
+        <filter val="Alpha"/>
+        <filter val="Beta"/>
+      </filters>
+    </filterColumn>
+    <filterColumn colId="1">
+      <customFilters and="1">
+        <customFilter operator="greaterThan" val="10"/>
+        <customFilter operator="lessThanOrEqual" val="20"/>
+      </customFilters>
+    </filterColumn>
+    <filterColumn colId="2">
+      <filters>
+        <dateGroupItem year="2024" month="4" dateTimeGrouping="month"/>
+      </filters>
+    </filterColumn>
+    <extLst><ext uri="{urn:test:autoFilter}"/></extLst>
+  </autoFilter>
+  <sortState ref="B2:D5">
+    <sortCondition ref="C2:C5" descending="1"/>
+    <sortCondition ref="D2:D5"/>
+  </sortState>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  assert.deepEqual(sheet.getAutoFilterDefinition(), {
+    range: "B2:D5",
+    columns: [
+      {
+        columnNumber: 2,
+        kind: "values",
+        values: ["Alpha", "Beta"],
+        includeBlank: true,
+      },
+      {
+        columnNumber: 3,
+        kind: "custom",
+        join: "and",
+        conditions: [
+          { operator: "greaterThan", value: "10" },
+          { operator: "lessThanOrEqual", value: "20" },
+        ],
+      },
+      {
+        columnNumber: 4,
+        kind: "dateGroup",
+        items: [{ year: 2024, month: 4, dateTimeGrouping: "month" }],
+      },
+    ],
+    sortState: {
+      range: "B2:D5",
+      conditions: [{ columnNumber: 3, descending: true }, { columnNumber: 4 }],
+    },
+  });
+});
+
+test("sheet setAutoFilter preserves nested filter XML when only the range changes", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c><c r="C1"><v>3</v></c><c r="D1"><v>4</v></c></row>
+    <row r="2"><c r="A2"><v>5</v></c><c r="B2"><v>6</v></c><c r="C2"><v>7</v></c><c r="D2"><v>8</v></c></row>
+  </sheetData>
+  <autoFilter ref="A1:C2">
+    <filterColumn colId="0">
+      <filters blank="1"><filter val="Alpha"/></filters>
+    </filterColumn>
+    <extLst><ext uri="{urn:test:autoFilter}"/></extLst>
+  </autoFilter>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.setAutoFilter("A1:D2");
+
+  const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<autoFilter ref="A1:D2">/);
+  assert.match(sheetXml, /<filterColumn colId="0">\s*<filters blank="1"><filter val="Alpha"\/><\/filters>\s*<\/filterColumn>/);
+  assert.match(sheetXml, /<extLst><ext uri="\{urn:test:autoFilter\}"\/><\/extLst>/);
+});
+
+test("sheet setAutoFilter rebases filter columns and preserves sortState children when the range anchor changes", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1"><v>0</v></c><c r="B1"><v>1</v></c><c r="C1"><v>2</v></c><c r="D1"><v>3</v></c></row>
+    <row r="2"><c r="A2"><v>4</v></c><c r="B2"><v>5</v></c><c r="C2"><v>6</v></c><c r="D2"><v>7</v></c></row>
+  </sheetData>
+  <autoFilter ref="B1:D2">
+    <filterColumn colId="1"><filters><filter val="Alpha"/></filters></filterColumn>
+    <extLst><ext uri="{urn:test:autoFilter}"/></extLst>
+  </autoFilter>
+  <sortState ref="B1:D2" caseSensitive="1">
+    <sortCondition ref="C1:C2" descending="1"/>
+    <extLst><ext uri="{urn:test:sortState}"/></extLst>
+  </sortState>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.setAutoFilter("A1:D2");
+
+  const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<autoFilter ref="A1:D2">/);
+  assert.match(sheetXml, /<filterColumn colId="2"><filters><filter val="Alpha"\/><\/filters><\/filterColumn>/);
+  assert.match(sheetXml, /<extLst><ext uri="\{urn:test:autoFilter\}"\/><\/extLst>/);
+  assert.match(sheetXml, /<sortState ref="A1:D2" caseSensitive="1">/);
+  assert.match(sheetXml, /<sortCondition ref="C1:C2" descending="1"\/>/);
+  assert.match(sheetXml, /<extLst><ext uri="\{urn:test:sortState\}"\/><\/extLst>/);
+});
+
+test("sheet autoFilter definition updates supported columns and preserves unrelated unsupported XML", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1"><v>H1</v></c><c r="B1"><v>H2</v></c><c r="C1"><v>H3</v></c><c r="D1"><v>H4</v></c></row>
+    <row r="2"><c r="A2"><v>A</v></c><c r="B2"><v>B</v></c><c r="C2"><v>C</v></c><c r="D2"><v>D</v></c></row>
+    <row r="3"><c r="A3"><v>E</v></c><c r="B3"><v>F</v></c><c r="C3"><v>G</v></c><c r="D3"><v>H</v></c></row>
+    <row r="4"><c r="A4"><v>I</v></c><c r="B4"><v>J</v></c><c r="C4"><v>K</v></c><c r="D4"><v>L</v></c></row>
+  </sheetData>
+  <autoFilter ref="A1:D4">
+    <filterColumn colId="0"><filters><filter val="Old"/></filters></filterColumn>
+    <filterColumn colId="1"><fooFilter answer="42"/></filterColumn>
+    <extLst><ext uri="{urn:test:autoFilter}"/></extLst>
+  </autoFilter>
+  <sortState ref="A1:D4"><sortCondition ref="A1:A4"/></sortState>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.setAutoFilterDefinition({
+    range: "A1:D4",
+    columns: [
+      { columnNumber: 1, kind: "values", values: ["Alpha"], includeBlank: true },
+      { columnNumber: 4, kind: "custom", join: "or", conditions: [{ operator: "contains", value: "foo" }] },
+    ],
+    sortState: {
+      range: "A1:D4",
+      conditions: [{ columnNumber: 4, descending: true }],
+    },
+  });
+
+  let sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<filterColumn colId="0"><filters blank="1"><filter val="Alpha"\/><\/filters><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="1"><fooFilter answer="42"\/><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="3"><customFilters><customFilter operator="equal" val="\*foo\*"\/><\/customFilters><\/filterColumn>/);
+  assert.match(sheetXml, /<extLst><ext uri="\{urn:test:autoFilter\}"\/><\/extLst>/);
+  assert.match(sheetXml, /<sortState ref="A1:D4"><sortCondition ref="D1:D4" descending="1"\/><\/sortState>/);
+
+  assert.deepEqual(sheet.getAutoFilterDefinition(), {
+    range: "A1:D4",
+    columns: [
+      {
+        columnNumber: 1,
+        kind: "values",
+        values: ["Alpha"],
+        includeBlank: true,
+      },
+      {
+        columnNumber: 4,
+        kind: "custom",
+        join: "or",
+        conditions: [{ operator: "contains", value: "foo" }],
+      },
+    ],
+    sortState: {
+      range: "A1:D4",
+      conditions: [{ columnNumber: 4, descending: true }],
+    },
+  });
+
+  sheet.clearAutoFilterColumns([2]);
+
+  sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.doesNotMatch(sheetXml, /<fooFilter\b/);
+  assert.match(sheetXml, /<filterColumn colId="0"><filters blank="1"><filter val="Alpha"\/><\/filters><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="3"><customFilters><customFilter operator="equal" val="\*foo\*"\/><\/customFilters><\/filterColumn>/);
+});
+
+test("sheet autoFilter definition reads and writes blank and advanced supported filter kinds", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = replaceEntryText(
+    await loadFixtureEntries(fixtureDir),
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1"><v>H1</v></c><c r="B1"><v>H2</v></c><c r="C1"><v>H3</v></c><c r="D1"><v>H4</v></c><c r="E1"><v>H5</v></c></row>
+    <row r="2"><c r="A2"><v>1</v></c><c r="B2"><v>2</v></c><c r="C2"><v>3</v></c><c r="D2"><v>4</v></c><c r="E2"><v>5</v></c></row>
+  </sheetData>
+  <autoFilter ref="A1:E2">
+    <filterColumn colId="0"><filters blank="0"/></filterColumn>
+    <filterColumn colId="1"><colorFilter dxfId="7" cellColor="1"/></filterColumn>
+    <filterColumn colId="2"><dynamicFilter type="today" valIso="2026-04-28T00:00:00Z" maxValIso="2026-04-29T00:00:00Z"/></filterColumn>
+    <filterColumn colId="3"><top10 top="0" percent="1" val="15" filterVal="42"/></filterColumn>
+    <filterColumn colId="4"><iconFilter iconSet="3Arrows" iconId="2"/></filterColumn>
+  </autoFilter>
+</worksheet>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+
+  assert.deepEqual(sheet.getAutoFilterDefinition(), {
+    range: "A1:E2",
+    columns: [
+      { columnNumber: 1, kind: "blank", mode: "nonBlank" },
+      { columnNumber: 2, kind: "color", dxfId: 7, cellColor: true },
+      {
+        columnNumber: 3,
+        kind: "dynamic",
+        type: "today",
+        valIso: "2026-04-28T00:00:00Z",
+        maxValIso: "2026-04-29T00:00:00Z",
+      },
+      {
+        columnNumber: 4,
+        kind: "top10",
+        top: false,
+        percent: true,
+        value: 15,
+        filterValue: 42,
+      },
+      { columnNumber: 5, kind: "icon", iconSet: "3Arrows", iconId: 2 },
+    ],
+    sortState: null,
+  });
+
+  sheet.setAutoFilterDefinition({
+    range: "A1:E2",
+    columns: [
+      { columnNumber: 1, kind: "blank", mode: "blank" },
+      { columnNumber: 2, kind: "color", dxfId: 9, cellColor: false },
+      { columnNumber: 3, kind: "dynamic", type: "belowAverage", valIso: "2026-04-28T00:00:00Z" },
+      { columnNumber: 4, kind: "top10", top: true, percent: false, value: 5 },
+      { columnNumber: 5, kind: "icon", iconSet: "5Arrows", iconId: 4 },
+    ],
+  });
+
+  const sheetXml = entryText(workbook.toEntries(), "xl/worksheets/sheet1.xml");
+  assert.match(sheetXml, /<filterColumn colId="0"><filters blank="1"\/><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="1"><colorFilter dxfId="9" cellColor="0"\/><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="2"><dynamicFilter type="belowAverage" valIso="2026-04-28T00:00:00Z"\/><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="3"><top10 top="1" percent="0" val="5"\/><\/filterColumn>/);
+  assert.match(sheetXml, /<filterColumn colId="4"><iconFilter iconSet="5Arrows" iconId="4"\/><\/filterColumn>/);
+
+  assert.deepEqual(sheet.getAutoFilterDefinition(), {
+    range: "A1:E2",
+    columns: [
+      { columnNumber: 1, kind: "blank", mode: "blank" },
+      { columnNumber: 2, kind: "color", dxfId: 9, cellColor: false },
+      { columnNumber: 3, kind: "dynamic", type: "belowAverage", valIso: "2026-04-28T00:00:00Z" },
+      { columnNumber: 4, kind: "top10", top: true, percent: false, value: 5 },
+      { columnNumber: 5, kind: "icon", iconSet: "5Arrows", iconId: 4 },
+    ],
+    sortState: null,
+  });
+});
+
+test("table autoFilter handle reads and updates filters without dropping nested XML on ref rewrites", async () => {
+  const fixtureDir = resolve("test/fixtures/lossless-source");
+  const entries = withSheetTable(
+    replaceEntryText(
+      await loadFixtureEntries(fixtureDir),
+      "xl/worksheets/sheet1.xml",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1"><v>2</v></c>
+      <c r="C1"><v>3</v></c>
+    </row>
+    <row r="2">
+      <c r="A2"><v>4</v></c>
+      <c r="B2"><v>5</v></c>
+      <c r="C2"><v>6</v></c>
+    </row>
+    <row r="3">
+      <c r="A3"><v>7</v></c>
+      <c r="B3"><v>8</v></c>
+      <c r="C3"><v>9</v></c>
+    </row>
+  </sheetData>
+  <tableParts count="1"><tablePart r:id="rIdTable1"/></tableParts>
+</worksheet>`,
+    ),
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Sales" displayName="Sales" ref="A1:B3" totalsRowShown="0">
+  <autoFilter ref="A1:B3">
+    <filterColumn colId="0"><filters blank="1"><filter val="Alpha"/></filters></filterColumn>
+    <sortState ref="A1:B3" caseSensitive="1">
+      <sortCondition ref="B1:B3" descending="1"/>
+      <extLst><ext uri="{urn:test:tableSort}"/></extLst>
+    </sortState>
+    <extLst><ext uri="{urn:test:autoFilter}"/></extLst>
+  </autoFilter>
+  <tableColumns count="2">
+    <tableColumn id="1" name="A"/>
+    <tableColumn id="2" name="B"/>
+  </tableColumns>
+</table>`,
+  );
+  const workbook = Workbook.fromEntries(entries);
+  const sheet = workbook.getSheet("Sheet1");
+  const table = sheet.getTable("Sales");
+
+  assert.equal(sheet.tryGetTable("Missing"), null);
+  assert.throws(() => sheet.getTable("Missing"), /Table not found: Missing/);
+  assert.deepEqual(sheet.getTables({ includeAutoFilter: true }), [
+    {
+      name: "Sales",
+      displayName: "Sales",
+      range: "A1:B3",
+      path: "xl/tables/table1.xml",
+      autoFilter: {
+        range: "A1:B3",
+        columns: [{ columnNumber: 1, kind: "values", values: ["Alpha"], includeBlank: true }],
+        sortState: {
+          range: "A1:B3",
+          conditions: [{ columnNumber: 2, descending: true }],
+        },
+      },
+    },
+  ]);
+  assert.deepEqual(table.getAutoFilterDefinition(), {
+    range: "A1:B3",
+    columns: [{ columnNumber: 1, kind: "values", values: ["Alpha"], includeBlank: true }],
+    sortState: {
+      range: "A1:B3",
+      conditions: [{ columnNumber: 2, descending: true }],
+    },
+  });
+
+  table.setAutoFilterColumn({
+    columnNumber: 2,
+    kind: "custom",
+    join: "or",
+    conditions: [{ operator: "endsWith", value: "Corp" }],
+  });
+
+  let tableXml = entryText(workbook.toEntries(), "xl/tables/table1.xml");
+  assert.match(tableXml, /<filterColumn colId="0"><filters blank="1"><filter val="Alpha"\/><\/filters><\/filterColumn>/);
+  assert.match(tableXml, /<filterColumn colId="1"><customFilters><customFilter operator="equal" val="\*Corp"\/><\/customFilters><\/filterColumn>/);
+  assert.match(tableXml, /<sortState ref="A1:B3" caseSensitive="1">/);
+  assert.match(tableXml, /<sortCondition ref="B1:B3" descending="1"\/>/);
+  assert.match(tableXml, /<extLst><ext uri="\{urn:test:tableSort\}"\/><\/extLst>/);
+  assert.match(tableXml, /<extLst><ext uri="\{urn:test:autoFilter\}"\/><\/extLst>/);
+
+  sheet.insertColumn("B");
+
+  tableXml = entryText(workbook.toEntries(), "xl/tables/table1.xml");
+  assert.equal(table.range, "A1:C3");
+  assert.match(tableXml, /<table [^>]*ref="A1:C3"[^>]*>/);
+  assert.match(tableXml, /<autoFilter ref="A1:C3">/);
+  assert.match(tableXml, /<filterColumn colId="0"><filters blank="1"><filter val="Alpha"\/><\/filters><\/filterColumn>/);
+  assert.match(tableXml, /<filterColumn colId="2"><customFilters><customFilter operator="equal" val="\*Corp"\/><\/customFilters><\/filterColumn>/);
+  assert.match(tableXml, /<sortState ref="A1:C3" caseSensitive="1">/);
+  assert.match(tableXml, /<sortCondition ref="C1:C3" descending="1"\/>/);
+  assert.match(tableXml, /<extLst><ext uri="\{urn:test:tableSort\}"\/><\/extLst>/);
+  assert.match(tableXml, /<extLst><ext uri="\{urn:test:autoFilter\}"\/><\/extLst>/);
+});
+
 test("sheet autoFilter APIs read, write, shift, and remove filters", async () => {
   const fixtureDir = resolve("test/fixtures/lossless-source");
   const entries = replaceEntryText(
@@ -4924,6 +5382,113 @@ test("sheet dataValidation APIs read, write, shift, and remove validations", asy
   assert.notEqual(sheet.getDataValidation("C2"), null);
   sheet.clearDataValidations();
   assert.deepEqual(sheet.getDataValidations(), []);
+});
+
+test("sheet sortRange reorders rows and moves linked metadata with the sorted records", () => {
+  const workbook = Workbook.create("Sheet1");
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.setRange("A1", [
+    ["Name", "Score", "Group", "Formula"],
+    ["Beta", 2, "Low", null],
+    ["Alpha", 5, "High", null],
+    ["Gamma", 3, "Mid", null],
+  ]);
+  sheet.setFormula("D2", "B2*10", { cachedValue: 20 });
+  sheet.setFormula("D3", "B3*10", { cachedValue: 50 });
+  sheet.setFormula("D4", "B4*10", { cachedValue: 30 });
+  sheet.setBackgroundColor("A2", "FFFF0000");
+  sheet.setBackgroundColor("A3", "FF00FF00");
+  sheet.setBackgroundColor("A4", "FF0000FF");
+  sheet.addMergedRange("C2:D2");
+  sheet.setHyperlink("A2", "https://example.com/beta");
+  sheet.setDataValidation("C2:D2", { type: "list", formula1: "\"Low,Mid,High\"" });
+  sheet.setAutoFilterDefinition({ range: "A1:D4", columns: [], sortState: null });
+  sheet.addTable("A1:D4", { name: "Scores" });
+
+  sheet.sortRange("A1:D4", {
+    conditions: [{ columnNumber: 2, descending: true }],
+    hasHeaderRow: true,
+  });
+
+  assert.deepEqual(sheet.getRange("A1:D4"), [
+    ["Name", "Score", "Group", "Formula"],
+    ["Alpha", 5, "High", 50],
+    ["Gamma", 3, "Mid", 30],
+    ["Beta", 2, "Low", 20],
+  ]);
+  assert.equal(sheet.getFormula("D2"), "B2*10");
+  assert.equal(sheet.getFormula("D3"), "B3*10");
+  assert.equal(sheet.getFormula("D4"), "B4*10");
+  assert.equal(sheet.getBackgroundColor("A2"), "FF00FF00");
+  assert.equal(sheet.getBackgroundColor("A3"), "FF0000FF");
+  assert.equal(sheet.getBackgroundColor("A4"), "FFFF0000");
+  assert.deepEqual(sheet.getMergedRanges(), ["C4:D4"]);
+  assert.equal(sheet.getHyperlink("A4")?.target, "https://example.com/beta");
+  assert.equal(sheet.getHyperlink("A2"), null);
+  assert.deepEqual(sheet.getDataValidation("C4:D4"), {
+    range: "C4:D4",
+    type: "list",
+    operator: null,
+    allowBlank: null,
+    showInputMessage: null,
+    showErrorMessage: null,
+    showDropDown: null,
+    errorStyle: null,
+    errorTitle: null,
+    error: null,
+    promptTitle: null,
+    prompt: null,
+    imeMode: null,
+    formula1: "\"Low,Mid,High\"",
+    formula2: null,
+  });
+  assert.deepEqual(sheet.getAutoFilterDefinition(), {
+    range: "A1:D4",
+    columns: [],
+    sortState: {
+      range: "A1:D4",
+      conditions: [{ columnNumber: 2, descending: true }],
+    },
+  });
+  assert.deepEqual(sheet.getTable("Scores").getAutoFilterDefinition(), {
+    range: "A1:D4",
+    columns: [],
+    sortState: {
+      range: "A1:D4",
+      conditions: [{ columnNumber: 2, descending: true }],
+    },
+  });
+  assert.equal(sheet.getTable("Scores").range, "A1:D4");
+});
+
+test("sheet sortRange supports multi-column sorting", () => {
+  const workbook = Workbook.create("Sheet1");
+  const sheet = workbook.getSheet("Sheet1");
+
+  sheet.setRange("A1", [
+    ["Name", "Score", "Group"],
+    ["Beta", 2, "B"],
+    ["Alpha", 2, "C"],
+    ["Gamma", 1, "A"],
+    ["Delta", 2, "A"],
+  ]);
+
+  sheet.sortRange("A1:C5", {
+    conditions: [
+      { columnNumber: 2 },
+      { columnNumber: 3, descending: true },
+    ],
+    hasHeaderRow: true,
+  });
+
+  assert.deepEqual(sheet.getRange("A1:C5"), [
+    ["Name", "Score", "Group"],
+    ["Gamma", 1, "A"],
+    ["Alpha", 2, "C"],
+    ["Beta", 2, "B"],
+    ["Delta", 2, "A"],
+  ]);
 });
 
 test("sheet autoFilter and dataValidation APIs tolerate single-quoted worksheet tags", async () => {

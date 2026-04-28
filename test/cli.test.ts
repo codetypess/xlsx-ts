@@ -1378,6 +1378,110 @@ test("workflow-oriented sheet hyperlink and filter commands manage metadata", as
   }
 });
 
+test("structured sheet filter CLI commands manage autoFilter definitions and columns", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
+
+  try {
+    const inputPath = join(tempRoot, "input.xlsx");
+    const filteredPath = join(tempRoot, "filtered.xlsx");
+    const definition = {
+      range: "A1:C4",
+      columns: [
+        { columnNumber: 1, kind: "values", values: ["Alpha"], includeBlank: true },
+        { columnNumber: 2, kind: "top10", top: true, percent: false, value: 3 },
+        { columnNumber: 3, kind: "blank", mode: "nonBlank" },
+      ],
+      sortState: {
+        range: "A1:C4",
+        conditions: [{ columnNumber: 2, descending: true }],
+      },
+    };
+
+    let result = await runCliCapture([
+      "create",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    result = await runCliCapture([
+      "sheet",
+      "filter",
+      "set-definition",
+      inputPath,
+      "--sheet",
+      "Sheet1",
+      "--definition",
+      JSON.stringify(definition),
+      "--output",
+      filteredPath,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).autoFilterDefinition, definition);
+
+    result = await runCliCapture([
+      "sheet",
+      "filter",
+      "get",
+      filteredPath,
+      "--sheet",
+      "Sheet1",
+      "--definition",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).autoFilterDefinition, definition);
+
+    result = await runCliCapture([
+      "sheet",
+      "filter",
+      "set-column",
+      filteredPath,
+      "--sheet",
+      "Sheet1",
+      "--column",
+      JSON.stringify({ columnNumber: 2, kind: "dynamic", type: "today" }),
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).autoFilterDefinition, {
+      range: "A1:C4",
+      columns: [
+        { columnNumber: 1, kind: "values", values: ["Alpha"], includeBlank: true },
+        { columnNumber: 2, kind: "dynamic", type: "today" },
+        { columnNumber: 3, kind: "blank", mode: "nonBlank" },
+      ],
+      sortState: {
+        range: "A1:C4",
+        conditions: [{ columnNumber: 2, descending: true }],
+      },
+    });
+
+    result = await runCliCapture([
+      "sheet",
+      "filter",
+      "clear-columns",
+      filteredPath,
+      "--sheet",
+      "Sheet1",
+      "--column-numbers",
+      JSON.stringify([1, 3]),
+      "--in-place",
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout).autoFilterDefinition, {
+      range: "A1:C4",
+      columns: [{ columnNumber: 2, kind: "dynamic", type: "today" }],
+      sortState: {
+        range: "A1:C4",
+        conditions: [{ columnNumber: 2, descending: true }],
+      },
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("workflow-oriented sheet selection and validation commands manage view metadata", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "fastxlsx-cli-test-"));
 
